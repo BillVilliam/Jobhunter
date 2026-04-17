@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "🚀 Start Server",
+      "type": "shell",
+      "command": "lsof -ti:3000 | xargs kill -9 2>/dev/null; sleep 1; npm run dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "jobhunter",
+        "clear": true
+      }
+    },
+    {
+      "label": "🛑 Stop Server",
+      "type": "shell",
+      "command": "lsof -ti:3000 | xargs kill -9 2>/dev/null; echo '✅ Server zastavený'",
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "🔄 Restart Server",
+      "type": "shell",
+      "command": "lsof -ti:3000 | xargs kill -9 2>/dev/null; sleep 2; npm run dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "jobhunter",
+        "clear": true
+      }
+    }
+  ]
+}
