@@ -14,7 +14,7 @@
  * AI model:           gpt-4.1-mini (OpenAI)
  */
 
-import OpenAI from "openai";
+import type OpenAIType from "openai";
 import * as cheerio from "cheerio";
 import { db } from "./storage.js";
 import { jobListings, watcherConfigs, cvVersions } from "@shared/schema.js";
@@ -119,21 +119,40 @@ async function safeFetch(
 }
 
 // ---------------------------------------------------------------------------
-// PDF text extraction (for CV analysis)
+// Image-based CV text extraction (OpenAI Vision)
 // ---------------------------------------------------------------------------
 
-async function extractTextFromPdf(base64DataUrl: string): Promise<string> {
+async function extractTextFromImage(base64DataUrl: string): Promise<string> {
   try {
-    // Strip data:application/pdf;base64, prefix
-    const base64 = base64DataUrl.replace(/^data:[^;]+;base64,/, "");
-    const buffer = Buffer.from(base64, "base64");
-    // pdf-parse v2 uses a class-based API: pass data in constructor options
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: new Uint8Array(buffer) });
-    const result = await parser.getText();
-    return (result.text || "").replace(/\s+/g, " ").trim().slice(0, 4000);
+    const openai = await getOpenAI();
+    // Ensure it has the data URL prefix
+    const imageUrl = base64DataUrl.startsWith("data:")
+      ? base64DataUrl
+      : `data:image/png;base64,${base64DataUrl}`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      max_tokens: 4000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extract ALL text content from this CV/resume image. Return the raw text only, no formatting or commentary. Include all sections: personal info, skills, experience, education, etc.",
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageUrl, detail: "high" },
+            },
+          ],
+        },
+      ],
+    });
+
+    return (response.choices[0]?.message?.content || "").trim().slice(0, 4000);
   } catch (err) {
-    console.error("[scraper] PDF text extraction failed:", err);
+    console.error("[scraper] Image text extraction failed:", err);
     return "";
   }
 }
@@ -605,13 +624,14 @@ async function scrapePraceCz(
 // OpenAI client (lazy)
 // ---------------------------------------------------------------------------
 
-let _openai: OpenAI | null = null;
+let _openai: OpenAIType | null = null;
 
-function getOpenAI(): OpenAI {
+async function getOpenAI(): Promise<OpenAIType> {
   if (!_openai) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey)
       throw new Error("OPENAI_API_KEY environment variable is not set");
+    const { default: OpenAI } = await import("openai");
     _openai = new OpenAI({ apiKey });
   }
   return _openai;
@@ -636,7 +656,7 @@ export async function analyseJobWithAI(
   cvSummaries?: CvSummary[],
   distanceKm?: number | null,
 ): Promise<AiAnalysis> {
-  const openai = getOpenAI();
+  const openai = await getOpenAI();
 
   const categoryDescriptions = categories
     .map((c) => CATEGORY_LABELS[c as JobCategory] ?? customLabelMap?.[c] ?? c)
@@ -941,8 +961,11 @@ export async function runWatcher(
   const cvSummaries: CvSummary[] = [];
   for (const cv of allCvRows) {
     let textSnippet = "";
-    if (cv.fileContent && cv.fileType === "pdf") {
-      textSnippet = await extractTextFromPdf(cv.fileContent);
+    // Use already-parsed text (from CV analysis) if available, otherwise extract via Vision
+    if (cv.parsedText) {
+      textSnippet = cv.parsedText;
+    } else if (cv.fileContent) {
+      textSnippet = await extractTextFromImage(cv.fileContent);
     }
     let skills: string[] = [];
     try { skills = JSON.parse(cv.skills || "[]"); } catch {}

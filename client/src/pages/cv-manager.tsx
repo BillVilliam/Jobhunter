@@ -11,10 +11,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Upload, Plus, Trash2, Mail, ChevronDown, ChevronUp, Settings, Image, Eye, ScanText } from "lucide-react";
+import { FileText, Upload, Plus, Trash2, Mail, ChevronDown, ChevronUp, Settings, Eye, ScanText, Loader2, MapPin, Briefcase, GraduationCap, Languages, Sparkles, Wand2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { CvVersion, CoverLetter } from "@shared/schema";
+import type { CvVersion, CoverLetter, JobListing } from "@shared/schema";
+
+interface CvAnalysis {
+  name?: string;
+  fullName?: string;
+  targetRole?: string;
+  location?: string;
+  skills?: string[];
+  languages?: { language: string; level: string }[];
+  experience?: { role: string; company: string; duration: string; description: string }[];
+  education?: { degree: string; school: string; year: string }[];
+  summary?: string;
+  suggestedCategories?: { value: string; label: string; emoji: string; terms: string[] }[];
+  suggestedSearchTerms?: string[];
+  cvLanguage?: string;
+  parsedText?: string;
+}
 
 // Tag options for cover letters (same categories as watchers + extras)
 const COVER_LETTER_TAGS = [
@@ -42,18 +58,39 @@ export default function CvManager() {
   const [editCl, setEditCl] = useState<CoverLetter | null>(null);
   const [editClTags, setEditClTags] = useState<string[]>([]);
   const [previewCv, setPreviewCv] = useState<CvVersion | null>(null);
-  const [parsedTextPreview, setParsedTextPreview] = useState<{ cvName: string; text: string; pages?: number } | null>(null);
+  const [analysisPreview, setAnalysisPreview] = useState<{ cvName: string; analysis: CvAnalysis } | null>(null);
+  const [isGenerateOpen, setIsGenerateOpen] = useState(false);
+  const [genCvId, setGenCvId] = useState<string>("");
+  const [genJobId, setGenJobId] = useState<string>("");
+  const [genLang, setGenLang] = useState("cs");
+  const [genLengthType, setGenLengthType] = useState("words");
+  const [genLengthValue, setGenLengthValue] = useState("250");
+  const [generatedContent, setGeneratedContent] = useState<string | null>(null);
   const { toast } = useToast();
 
   // ── CV queries ──
   const { data: cvVersions = [], isLoading: cvLoading } = useQuery<CvVersion[]>({
     queryKey: ["/api/cv-versions"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/cv-versions?includeContent=1");
+      return res.json();
+    },
   });
 
   // ── Cover letter queries ──
   const { data: coverLetters = [], isLoading: clLoading } = useQuery<CoverLetter[]>({
     queryKey: ["/api/cover-letters"],
   });
+
+  // ── Favorite jobs (for cover letter generation) ──
+  const { data: allJobs = [] } = useQuery<JobListing[]>({
+    queryKey: ["/api/jobs", { favorite: true, minScore: 0, limit: 100 }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/jobs?favorite=1&minScore=0&limit=100");
+      return res.json();
+    },
+  });
+  const favoriteJobs = allJobs;
 
   // ── CV mutations ──
   const createCvMutation = useMutation({
@@ -64,23 +101,20 @@ export default function CvManager() {
         reader.onload = () => resolve(reader.result as string);
         reader.readAsDataURL(file);
       });
-      const skills = (data.get("skills") as string).split(",").map(s => s.trim()).filter(Boolean);
-      await apiRequest("POST", "/api/cv-versions", {
-        name: data.get("name"),
-        description: data.get("description"),
+      const res = await apiRequest("POST", "/api/cv-versions", {
+        name: file.name,
         fileName: file.name,
         fileContent,
-        fileType: file.name.endsWith(".pdf") ? "pdf" : "docx",
-        targetRole: data.get("targetRole"),
-        skills: JSON.stringify(skills),
-        language: data.get("language"),
+        fileType: "image",
         isActive: true,
       });
+      return await res.json();
     },
-    onSuccess: () => {
+    onSuccess: (cv) => {
       queryClient.invalidateQueries({ queryKey: ["/api/cv-versions"] });
       setIsAddCvOpen(false);
-      toast({ title: "CV pridané ✓" });
+      toast({ title: "CV nahrané ✓", description: "Spúšťam AI analýzu..." });
+      analyzeCvMutation.mutate({ id: cv.id, name: cv.name });
     },
     onError: () => {
       toast({ title: "Chyba", description: "Nepodarilo sa nahrať CV.", variant: "destructive" });
@@ -102,39 +136,29 @@ export default function CvManager() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/cv-versions"] }),
   });
 
-  const uploadCvImageMutation = useMutation({
-    mutationFn: async ({ id, file }: { id: number; file: File }) => {
-      const reader = new FileReader();
-      const imageContent = await new Promise<string>((resolve) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-      await apiRequest("PATCH", `/api/cv-versions/${id}`, { imageContent });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/cv-versions"] });
-      toast({ title: "Fotka CV uložená ✓" });
-    },
-    onError: () => {
-      toast({ title: "Chyba", description: "Nepodarilo sa nahrať fotku.", variant: "destructive" });
-    },
-  });
-
-  const parseCvMutation = useMutation({
+  const analyzeCvMutation = useMutation({
     mutationFn: async ({ id, name }: { id: number; name: string }) => {
-      const res = await apiRequest("POST", `/api/cv-versions/${id}/parse`);
+      const res = await apiRequest("POST", `/api/cv-versions/${id}/analyze`);
       const data = await res.json();
       return { ...data, cvName: name };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/cv-versions"] });
-      setParsedTextPreview({ cvName: data.cvName, text: data.parsedText, pages: data.pages });
-      toast({ title: "CV prečítané ✓", description: `${data.pages} strán` });
+      setAnalysisPreview({ cvName: data.analysis?.name || data.cvName, analysis: data.analysis });
+      toast({ title: "CV zanalyzované ✓", description: `Profil: ${data.analysis?.targetRole || "OK"}` });
     },
     onError: () => {
-      toast({ title: "Chyba", description: "Nepodarilo sa prečítať CV.", variant: "destructive" });
+      toast({ title: "Chyba", description: "Nepodarilo sa analyzovať CV.", variant: "destructive" });
     },
   });
+
+  const parseCvAnalysis = (cv: CvVersion): CvAnalysis | null => {
+    try {
+      return JSON.parse((cv as any).cvAnalysis || "null");
+    } catch {
+      return null;
+    }
+  };
 
   // ── Cover letter mutations ──
   const createClMutation = useMutation({
@@ -175,6 +199,20 @@ export default function CvManager() {
       queryClient.invalidateQueries({ queryKey: ["/api/cover-letters"] });
       setEditCl(null);
       toast({ title: "Motivačný list aktualizovaný ✓" });
+    },
+  });
+
+  const generateClMutation = useMutation({
+    mutationFn: async (params: { cvId: number; jobId: number; language: string; lengthType: string; lengthValue: number }) => {
+      const res = await apiRequest("POST", "/api/cover-letters/generate", params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setGeneratedContent(data.content);
+      toast({ title: "Motivačný list vygenerovaný ✓", description: `Pre ${data.company} – ${data.jobTitle}` });
+    },
+    onError: () => {
+      toast({ title: "Chyba", description: "Nepodarilo sa vygenerovať motivačný list.", variant: "destructive" });
     },
   });
 
@@ -241,46 +279,26 @@ export default function CvManager() {
           <div className="flex justify-end">
             <Dialog open={isAddCvOpen} onOpenChange={setIsAddCvOpen}>
               <DialogTrigger asChild>
-                <Button size="sm" className="gap-1.5"><Plus className="w-4 h-4" /> Pridať CV</Button>
+                <Button size="sm" className="gap-1.5"><Plus className="w-4 h-4" /> Nahrať CV</Button>
               </DialogTrigger>
               <DialogContent className="max-w-lg">
-                <DialogHeader><DialogTitle>Nahrať novú verziu CV</DialogTitle></DialogHeader>
+                <DialogHeader><DialogTitle>Nahrať CV obrázok</DialogTitle></DialogHeader>
                 <form onSubmit={handleCvSubmit} className="space-y-4 mt-2">
                   <div className="space-y-2">
-                    <Label htmlFor="cv-name">Názov verzie</Label>
-                    <Input id="cv-name" name="name" placeholder="napr. Frontend Developer CV" required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cv-description">Popis</Label>
-                    <Textarea id="cv-description" name="description" placeholder="Čo táto verzia zdôrazňuje..." rows={2} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cv-targetRole">Cieľová pozícia</Label>
-                    <Input id="cv-targetRole" name="targetRole" placeholder="napr. Frontend Developer" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cv-skills">Kľúčové skills (čiarkou oddelené)</Label>
-                    <Input id="cv-skills" name="skills" placeholder="React, TypeScript, Node.js" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cv-language">Jazyk</Label>
-                    <Select name="language" defaultValue="en">
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="en">Angličtina</SelectItem>
-                        <SelectItem value="cs">Čeština</SelectItem>
-                        <SelectItem value="sk">Slovenčina</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="cv-file">CV súbor (PDF/DOCX)</Label>
-                    <Input id="cv-file" name="file" type="file" accept=".pdf,.docx" required />
+                    <Label htmlFor="cv-file">CV súbor (JPG / PNG)</Label>
+                    <Input id="cv-file" name="file" type="file" accept=".jpg,.jpeg,.png,.webp" required />
+                    <p className="text-xs text-muted-foreground">
+                      Nahraj screenshot alebo fotku CV. AI automaticky prečíta obsah, extrahuje skills, lokáciu, skúsenosti a navrhne kategórie pre watchery.
+                    </p>
                   </div>
                   <div className="flex justify-end gap-2 pt-2">
                     <Button type="button" variant="ghost" onClick={() => setIsAddCvOpen(false)}>Zrušiť</Button>
-                    <Button type="submit" disabled={createCvMutation.isPending}>
-                      {createCvMutation.isPending ? "Nahrávam..." : "Nahrať CV"}
+                    <Button type="submit" disabled={createCvMutation.isPending || analyzeCvMutation.isPending}>
+                      {createCvMutation.isPending || analyzeCvMutation.isPending ? (
+                        <><Loader2 className="w-4 h-4 animate-spin mr-1" /> Analyzujem...</>
+                      ) : (
+                        <><Upload className="w-4 h-4 mr-1" /> Nahrať a analyzovať</>
+                      )}
                     </Button>
                   </div>
                 </form>
@@ -306,100 +324,93 @@ export default function CvManager() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               {cvVersions.map((cv) => {
                 let skills: string[] = [];
                 try { skills = JSON.parse(cv.skills || "[]"); } catch {}
+                const analysis = parseCvAnalysis(cv);
                 return (
                   <Card key={cv.id} className={`border-card-border transition-opacity ${!cv.isActive ? "opacity-60" : ""}`}>
                     <CardContent className="py-4 px-5">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3 min-w-0">
-                          {/* CV image thumbnail or icon */}
-                          {(cv as any).imageContent ? (
-                            <button
-                              className="shrink-0 mt-0.5 rounded-lg overflow-hidden border border-card-border w-10 h-14 hover:opacity-80 transition-opacity"
-                              onClick={() => setPreviewCv(cv)}
-                              title="Zobraziť foto CV"
-                            >
-                              <img
-                                src={(cv as any).imageContent}
-                                alt="CV preview"
-                                className="w-full h-full object-cover object-top"
-                              />
-                            </button>
+                      <div className="flex items-start gap-4">
+                        {/* CV thumbnail */}
+                        <button
+                          className="shrink-0 rounded-lg overflow-hidden border border-card-border w-16 h-22 hover:opacity-80 transition-opacity bg-muted"
+                          onClick={() => setPreviewCv(cv)}
+                          title="Zobraziť CV"
+                        >
+                          {cv.fileContent ? (
+                            <img src={cv.fileContent} alt="CV" className="w-full h-full object-cover object-top" />
                           ) : (
-                            <div className="p-2 rounded-lg bg-primary/10 mt-0.5 shrink-0"><FileText className="w-4 h-4 text-primary" /></div>
+                            <div className="w-full h-full flex items-center justify-center"><FileText className="w-6 h-6 text-muted-foreground" /></div>
                           )}
-                          <div className="min-w-0">
+                        </button>
+
+                        {/* CV info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
                             <h3 className="text-sm font-semibold truncate">{cv.name}</h3>
-                            {cv.targetRole && <p className="text-xs text-muted-foreground mt-0.5">{cv.targetRole}</p>}
-                            {cv.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cv.description}</p>}
-                            {skills.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-2">
-                                {skills.slice(0, 5).map((skill) => (
-                                  <Badge key={skill} variant="secondary" className="text-[10px] px-1.5 py-0">{skill}</Badge>
-                                ))}
-                                {skills.length > 5 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{skills.length - 5}</Badge>}
-                              </div>
-                            )}
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide mt-2 inline-block">{cv.fileType} · {cv.language}</span>
+                            {analysis && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">AI Analyzed</Badge>}
                           </div>
+                          {cv.targetRole && <p className="text-xs text-muted-foreground mt-0.5">🎯 {cv.targetRole}</p>}
+                          {analysis?.location && (
+                            <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                              <MapPin className="w-3 h-3" /> {analysis.location}
+                            </p>
+                          )}
+                          {cv.description && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cv.description}</p>}
+                          {skills.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {skills.slice(0, 8).map((skill) => (
+                                <Badge key={skill} variant="secondary" className="text-[10px] px-1.5 py-0">{skill}</Badge>
+                              ))}
+                              {skills.length > 8 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{skills.length - 8}</Badge>}
+                            </div>
+                          )}
+                          {analysis?.languages && analysis.languages.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {analysis.languages.map((lang: { language: string; level: string }) => (
+                                <Badge key={lang.language} variant="outline" className="text-[10px] px-1.5 py-0">🌐 {lang.language} ({lang.level})</Badge>
+                              ))}
+                            </div>
+                          )}
+                          {analysis?.suggestedCategories && analysis.suggestedCategories.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-[10px] text-muted-foreground font-medium mb-1">Odporúčané kategórie:</p>
+                              <div className="flex flex-wrap gap-1">
+                                {analysis.suggestedCategories.slice(0, 5).map((cat: { value: string; emoji: string; label: string }) => (
+                                  <Badge key={cat.value} variant="secondary" className="text-[10px] px-1.5 py-0 bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                                    {cat.emoji} {cat.label}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-wide mt-2 inline-block">{cv.language}</span>
                         </div>
-                        <div className="flex flex-col items-end gap-2 shrink-0 ml-2">
+
+                        {/* Actions */}
+                        <div className="flex flex-col items-end gap-2 shrink-0">
                           <Switch checked={cv.isActive ?? true} onCheckedChange={(c) => toggleCvActiveMutation.mutate({ id: cv.id, isActive: c })} />
-                          {/* Image upload button */}
-                          <label
-                            className="cursor-pointer inline-flex items-center justify-center h-7 w-7 rounded-md border border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                            title="Nahrať fotku CV"
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={`h-7 w-7 p-0 ${analysis ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-foreground"}`}
+                            onClick={() => {
+                              if (analysis) {
+                                setAnalysisPreview({ cvName: cv.name, analysis });
+                              } else {
+                                analyzeCvMutation.mutate({ id: cv.id, name: cv.name });
+                              }
+                            }}
+                            disabled={analyzeCvMutation.isPending}
+                            title={analysis ? "Zobraziť analýzu" : "Analyzovať CV"}
                           >
-                            <Image className="w-3.5 h-3.5" />
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) uploadCvImageMutation.mutate({ id: cv.id, file });
-                              }}
-                            />
-                          </label>
-                          {(cv as any).imageContent && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                              onClick={() => setPreviewCv(cv)}
-                              title="Zobraziť CV"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                          {/* Parse CV to text */}
-                          {cv.fileType === "pdf" && (
-                            (cv as any).parsedText ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 w-7 p-0 text-green-600 hover:text-green-700"
-                                onClick={() => setParsedTextPreview({ cvName: cv.name, text: (cv as any).parsedText })}
-                                title="Zobraziť extrahovaný text"
-                              >
-                                <ScanText className="w-3.5 h-3.5" />
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                                onClick={() => parseCvMutation.mutate({ id: cv.id, name: cv.name })}
-                                disabled={parseCvMutation.isPending}
-                                title="Prečítať CV text"
-                              >
-                                <ScanText className="w-3.5 h-3.5" />
-                              </Button>
-                            )
-                          )}
+                            {analyzeCvMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                          </Button>
+                          <Button variant="outline" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" onClick={() => setPreviewCv(cv)} title="Zobraziť CV">
+                            <Eye className="w-3.5 h-3.5" />
+                          </Button>
                           <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteCvMutation.mutate(cv.id)}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -415,7 +426,10 @@ export default function CvManager() {
 
         {/* ═══ TAB 2: Motivačné listy ═══ */}
         <TabsContent value="cover-letters" className="space-y-4">
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setIsGenerateOpen(true); setGeneratedContent(null); }}>
+              <Wand2 className="w-4 h-4" /> Generovať z AI
+            </Button>
             <Dialog open={isAddClOpen} onOpenChange={(open) => { setIsAddClOpen(open); if (!open) setSelectedTags([]); }}>
               <DialogTrigger asChild>
                 <Button size="sm" className="gap-1.5"><Plus className="w-4 h-4" /> Nový motivačný list</Button>
@@ -669,43 +683,228 @@ export default function CvManager() {
           <DialogHeader>
             <DialogTitle>📄 {previewCv?.name}</DialogTitle>
           </DialogHeader>
-          {previewCv && (previewCv as any).imageContent ? (
+          {previewCv && (previewCv.fileContent || (previewCv as any).imageContent) ? (
             <img
-              src={(previewCv as any).imageContent}
+              src={previewCv.fileContent || (previewCv as any).imageContent}
               alt="CV preview"
               className="w-full rounded-lg border border-card-border mt-2"
             />
           ) : (
-            <p className="text-sm text-muted-foreground text-center py-8">Žiadna fotka CV. Nahraj ju kliknutím na ikonu 🖼 pri CV karte.</p>
+            <p className="text-sm text-muted-foreground text-center py-8">Žiadny obrázok CV.</p>
           )}
         </DialogContent>
       </Dialog>
 
-      {/* ── Parsed text preview dialog ── */}
-      <Dialog open={parsedTextPreview !== null} onOpenChange={(open) => { if (!open) setParsedTextPreview(null); }}>
+      {/* ── CV Analysis preview dialog ── */}
+      <Dialog open={analysisPreview !== null} onOpenChange={(open) => { if (!open) setAnalysisPreview(null); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>📝 Extrahovaný text – {parsedTextPreview?.cvName}</DialogTitle>
+            <DialogTitle>🧠 AI Analýza – {analysisPreview?.cvName}</DialogTitle>
           </DialogHeader>
-          {parsedTextPreview?.pages && (
-            <p className="text-xs text-muted-foreground">Počet strán: {parsedTextPreview.pages}</p>
-          )}
-          <pre className="text-xs bg-muted p-4 rounded-lg whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto font-mono leading-relaxed">
-            {parsedTextPreview?.text || "Žiadny text"}
-          </pre>
-          <div className="flex justify-end gap-2">
+          {analysisPreview?.analysis && (() => {
+            const a = analysisPreview.analysis;
+            return (
+              <div className="space-y-4 mt-2">
+                {a.summary && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Profil</h4>
+                    <p className="text-sm">{a.summary}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  {a.fullName && <div><h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Meno</h4><p className="text-sm">{a.fullName}</p></div>}
+                  {a.location && <div><h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> Lokácia</h4><p className="text-sm">{a.location}</p></div>}
+                  {a.targetRole && <div><h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Briefcase className="w-3 h-3" /> Cieľová pozícia</h4><p className="text-sm">{a.targetRole}</p></div>}
+                </div>
+                {a.skills && a.skills.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Skills</h4>
+                    <div className="flex flex-wrap gap-1">{a.skills.map((s) => <Badge key={s} variant="secondary" className="text-[10px]">{s}</Badge>)}</div>
+                  </div>
+                )}
+                {a.languages && a.languages.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Languages className="w-3 h-3" /> Jazyky</h4>
+                    <div className="flex flex-wrap gap-1">{a.languages.map((l) => <Badge key={l.language} variant="outline" className="text-[10px]">{l.language} ({l.level})</Badge>)}</div>
+                  </div>
+                )}
+                {a.experience && a.experience.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Briefcase className="w-3 h-3" /> Skúsenosti</h4>
+                    <div className="space-y-2">
+                      {a.experience.map((exp, i) => (
+                        <div key={i} className="text-sm border-l-2 border-primary/20 pl-3">
+                          <p className="font-medium">{exp.role}</p>
+                          <p className="text-xs text-muted-foreground">{exp.company} · {exp.duration}</p>
+                          {exp.description && <p className="text-xs text-muted-foreground mt-0.5">{exp.description}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {a.education && a.education.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><GraduationCap className="w-3 h-3" /> Vzdelanie</h4>
+                    {a.education.map((edu, i) => <div key={i} className="text-sm"><span className="font-medium">{edu.degree}</span><span className="text-muted-foreground"> – {edu.school} ({edu.year})</span></div>)}
+                  </div>
+                )}
+                {a.suggestedCategories && a.suggestedCategories.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Odporúčané kategórie pre watchery</h4>
+                    <div className="space-y-1">
+                      {a.suggestedCategories.map((cat) => (
+                        <div key={cat.value} className="flex items-center gap-2 text-sm">
+                          <span>{cat.emoji}</span><span className="font-medium">{cat.label}</span>
+                          <span className="text-xs text-muted-foreground">({cat.terms.join(", ")})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {a.suggestedSearchTerms && a.suggestedSearchTerms.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Odporúčané search terms</h4>
+                    <div className="flex flex-wrap gap-1">{a.suggestedSearchTerms.map((t) => <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>)}</div>
+                  </div>
+                )}
+                {a.parsedText && (
+                  <div>
+                    <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Extrahovaný text</h4>
+                    <pre className="text-xs bg-muted p-3 rounded-lg whitespace-pre-wrap break-words max-h-40 overflow-y-auto font-mono">{a.parsedText}</pre>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Generate cover letter dialog ── */}
+      <Dialog open={isGenerateOpen} onOpenChange={(open) => { setIsGenerateOpen(open); if (!open) setGeneratedContent(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Wand2 className="w-5 h-5 text-violet-500" /> Generovať motivačný list</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            {/* CV select */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Vyber CV</Label>
+              <Select value={genCvId} onValueChange={setGenCvId}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Zvol CV..." /></SelectTrigger>
+                <SelectContent>
+                  {cvVersions.filter(cv => cv.isActive).map(cv => (
+                    <SelectItem key={cv.id} value={String(cv.id)}>
+                      {cv.name} {cv.targetRole ? `(${cv.targetRole})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {cvVersions.length === 0 && <p className="text-xs text-muted-foreground">Najprv nahraj CV v záložke CV.</p>}
+            </div>
+
+            {/* Job select (favorites only) */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Vyber pracovnú ponuku (z obľúbených)</Label>
+              <Select value={genJobId} onValueChange={setGenJobId}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Zvol ponuku..." /></SelectTrigger>
+                <SelectContent>
+                  {favoriteJobs.map(job => (
+                    <SelectItem key={job.id} value={String(job.id)}>
+                      {job.title} – {job.company} {job.matchScore ? `(${job.matchScore}%)` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {favoriteJobs.length === 0 && <p className="text-xs text-muted-foreground">Nemáš žiadne obľúbené ponuky. Označ ponuku ⭐ v sekcii Ponuky.</p>}
+            </div>
+
+            {/* Language + Length */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Jazyk</Label>
+                <Select value={genLang} onValueChange={setGenLang}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cs">Čeština</SelectItem>
+                    <SelectItem value="sk">Slovenčina</SelectItem>
+                    <SelectItem value="en">Angličtina</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Dĺžka v</Label>
+                <Select value={genLengthType} onValueChange={setGenLengthType}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="words">Slovách</SelectItem>
+                    <SelectItem value="chars">Znakoch</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Počet</Label>
+                <Input className="h-9" type="number" min="50" max="5000" value={genLengthValue} onChange={e => setGenLengthValue(e.target.value)} />
+              </div>
+            </div>
+
+            {/* Generate button */}
             <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (parsedTextPreview?.text) {
-                  navigator.clipboard.writeText(parsedTextPreview.text);
-                  toast({ title: "Skopírované ✓" });
-                }
-              }}
+              className="w-full gap-2"
+              disabled={!genCvId || !genJobId || generateClMutation.isPending}
+              onClick={() => generateClMutation.mutate({
+                cvId: Number(genCvId),
+                jobId: Number(genJobId),
+                language: genLang,
+                lengthType: genLengthType,
+                lengthValue: Number(genLengthValue),
+              })}
             >
-              Kopírovať text
+              {generateClMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Generujem...</>
+              ) : (
+                <><Wand2 className="w-4 h-4" /> Vygenerovať motivačný list</>
+              )}
             </Button>
+
+            {/* Generated result */}
+            {generatedContent && (
+              <div className="space-y-3 border-t pt-4">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-green-500" /> Vygenerovaný motivačný list
+                </h4>
+                <div className="bg-muted/50 rounded-lg p-4 border">
+                  <p className="text-sm whitespace-pre-wrap">{generatedContent}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      const selectedJob = favoriteJobs.find(j => j.id === Number(genJobId));
+                      const selectedCv = cvVersions.find(c => c.id === Number(genCvId));
+                      createClMutation.mutate({
+                        name: `${selectedJob?.title || "Pozícia"} – ${selectedJob?.company || "Firma"} (${selectedCv?.name || "CV"})`,
+                        content: generatedContent,
+                        tags: JSON.stringify([]),
+                        language: genLang,
+                        isActive: true,
+                      });
+                      setIsGenerateOpen(false);
+                      setGeneratedContent(null);
+                    }}
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Uložiť ako nový motivačný list
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { navigator.clipboard.writeText(generatedContent); toast({ title: "Skopírované ✓" }); }}
+                  >
+                    Kopírovať
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

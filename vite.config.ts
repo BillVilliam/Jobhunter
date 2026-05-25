@@ -17,4 +17,47 @@ export default defineConfig({
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
   },
+  server: {
+    warmup: {
+      clientFiles: [
+        "./client/index.html",
+        "./client/src/main.tsx",
+        "./client/src/App.tsx",
+      ],
+    },
+  },
+  // Pre-bundle the heaviest parts of the app so the first request after
+  // `npm run dev` isn't blocked on a long esbuild dep-scan.
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "wouter",
+      "@tanstack/react-query",
+      "framer-motion",
+      "lucide-react",
+      "date-fns",
+      "clsx",
+      "tailwind-merge",
+      "class-variance-authority",
+      "react-hook-form",
+      "@hookform/resolvers/zod",
+      "zod",
+      "recharts",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "@radix-ui/react-select",
+      "@radix-ui/react-toast",
+      "@radix-ui/react-tooltip",
+      "@radix-ui/react-tabs",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-label",
+      "@radix-ui/react-checkbox",
+      "@radix-ui/react-switch",
+      "@radix-ui/react-progress",
+      "@radix-ui/react-alert-dialog",
+    ],
+  },
 });

@@ -5,16 +5,17 @@ import { z } from "zod";
 // CV versions - user uploads different versions of their CV
 export const cvVersions = sqliteTable("cv_versions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull(), // e.g. "Frontend Developer CV", "Fullstack CV"
+  name: text("name").notNull(), // auto-generated or user-provided
   description: text("description"), // what this version emphasizes
   fileName: text("file_name").notNull(),
-  fileContent: text("file_content").notNull(), // base64 encoded file
-  fileType: text("file_type").notNull(), // pdf, docx
-  targetRole: text("target_role"), // what role this CV targets
-  skills: text("skills"), // JSON array of key skills highlighted
-  language: text("language").default("en"), // cs, en, sk
+  fileContent: text("file_content").notNull(), // base64 encoded image file
+  fileType: text("file_type").notNull(), // image (jpg/png/jpeg)
+  targetRole: text("target_role"), // what role this CV targets (AI-detected)
+  skills: text("skills"), // JSON array of key skills (AI-detected)
+  language: text("language").default("en"), // cs, en, sk (AI-detected)
   imageContent: text("image_content"), // base64 encoded screenshot/photo of the CV
-  parsedText: text("parsed_text"), // extracted plain text from PDF
+  parsedText: text("parsed_text"), // extracted plain text from image via Vision
+  cvAnalysis: text("cv_analysis"), // full JSON AI analysis: { location, skills, languages, experience, education, suggestedCategories, ... }
   isActive: integer("is_active", { mode: "boolean" }).default(true),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

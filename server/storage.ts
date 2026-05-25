@@ -31,7 +31,7 @@ export interface IStorage {
   deleteCoverLetter(id: number): Promise<void>;
 
   // Job Listings
-  getJobListings(filters?: { status?: string; portal?: string; minScore?: number; limit?: number }): Promise<JobListing[]>;
+  getJobListings(filters?: { status?: string; portal?: string; minScore?: number; limit?: number; favorite?: boolean }): Promise<JobListing[]>;
   getJobListing(id: number): Promise<JobListing | undefined>;
   createJobListing(job: InsertJobListing): Promise<JobListing>;
   updateJobListing(id: number, job: Partial<InsertJobListing>): Promise<JobListing | undefined>;
@@ -105,7 +105,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Job Listings
-  async getJobListings(filters?: { status?: string; portal?: string; minScore?: number; limit?: number }): Promise<JobListing[]> {
+  async getJobListings(filters?: { status?: string; portal?: string; minScore?: number; limit?: number; favorite?: boolean }): Promise<JobListing[]> {
     let query = db.select().from(jobListings);
     const conditions = [];
     if (filters?.status) {
@@ -116,6 +116,7 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.portal) conditions.push(eq(jobListings.portal, filters.portal));
     if (filters?.minScore != null) conditions.push(gte(jobListings.matchScore, filters.minScore));
+  if (filters?.favorite != null) conditions.push(eq(jobListings.isFavorite, filters.favorite));
     let rows: JobListing[];
     const ordering = [desc(jobListings.isFavorite), desc(jobListings.matchScore)];
     if (conditions.length > 0) {
