@@ -24,6 +24,12 @@
         no admin backdoor reading user CV content either.
       - Active profiles stay in the database; deactivated/deleted profiles
         get their data removed (GDPR right to erasure).
+      - **Inactivity-based data expiry** (keeps storage small + GDPR-friendly):
+        track `lastSeenAt` per user; after ~23 days of inactivity send a
+        warning email ("log in or your data will be deleted in 7 days");
+        after 30 days a daily cleanup job permanently deletes the user's
+        CVs, cover letters, job listings, watchers and ledger. CV images are
+        the only heavy data (~0.5–2 MB/user) — everything else is tiny text.
 - [ ] **Authentication / cybersecurity**: sign-in (email + password with
       hashed passwords, or OAuth via Google), sessions/JWT, per-user data
       isolation, rate limiting, HTTPS only. Auth must land BEFORE the app
@@ -40,7 +46,12 @@
       no credits → scan and AI actions are refused (HTTP 402).
 - [x] Credit ledger table: userId (ready for accounts), action, tokensUsed,
       creditsDelta, timestamp.
-- [ ] Decide the real tokens-per-credit ratio + starter amount (pricing).
+- [x] **Pricing model decided: 1 credit ≈ 1 scan.** The app measures the real
+      token cost of every scan; the suggested ratio is 2× the measured average
+      (safety reserve). After a few real scans, call
+      `POST /api/credits/calibrate` to apply it (stats visible in
+      `GET /api/credits` → scanStats).
+- [ ] Decide the starter credit amount (still placeholder 100).
 - [ ] Per-user balances once accounts/auth land; payment provider (Stripe)
       only if/when needed.
 - [ ] UI for top-up + ledger history (now only the balance shows on the

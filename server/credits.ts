@@ -92,6 +92,7 @@ export function hasCredits(): boolean {
  */
 export function recordAiUsage(action: string, tokensUsed: number, details?: string): void {
   if (!tokensUsed || tokensUsed <= 0) return;
+  if (activeMeterTokens != null) activeMeterTokens += tokensUsed;
   const creditsDelta = -(tokensUsed / getTokensPerCredit());
   db.insert(creditLedger)
     .values({
@@ -102,6 +103,74 @@ export function recordAiUsage(action: string, tokensUsed: number, details?: stri
       timestamp: new Date().toISOString(),
     })
     .run();
+}
+
+// ---------------------------------------------------------------------------
+// Scan cost measurement — pricing model: 1 credit ≈ 1 scan.
+// We MEASURE what a scan really costs in tokens, then the suggested ratio is
+// 2× the measured average (safety reserve). Apply it via POST /api/credits/calibrate.
+// ---------------------------------------------------------------------------
+
+const SCAN_COUNT_KEY = "scanCount";
+const SCAN_TOKENS_KEY = "scanTokensTotal";
+
+/** Tokens collected while a scan is running (recordAiUsage feeds this). */
+let activeMeterTokens: number | null = null;
+
+export function beginScanMeter(): void {
+  activeMeterTokens = 0;
+}
+
+/** Stop measuring, persist the scan's token cost, return it. */
+export function endScanMeter(): number {
+  const tokens = activeMeterTokens ?? 0;
+  activeMeterTokens = null;
+  if (tokens > 0) {
+    const now = new Date().toISOString();
+    const read = (key: string) => {
+      const row = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
+      const n = row ? Number(row.value) : 0;
+      return Number.isFinite(n) ? n : 0;
+    };
+    const write = (key: string, value: number) =>
+      db.insert(appSettings)
+        .values({ key, value: String(value), updatedAt: now })
+        .onConflictDoUpdate({ target: appSettings.key, set: { value: String(value), updatedAt: now } })
+        .run();
+    write(SCAN_COUNT_KEY, read(SCAN_COUNT_KEY) + 1);
+    write(SCAN_TOKENS_KEY, read(SCAN_TOKENS_KEY) + tokens);
+    console.log(`[credits] Scan measured: ${tokens} tokens`);
+  }
+  return tokens;
+}
+
+export interface ScanStats {
+  scans: number;
+  avgTokensPerScan: number;
+  /** 2× the measured average — "1 credit buys one scan with reserve" */
+  suggestedTokensPerCredit: number;
+}
+
+export function getScanStats(): ScanStats {
+  const row = (key: string) => {
+    const r = db.select().from(appSettings).where(eq(appSettings.key, key)).get();
+    const n = r ? Number(r.value) : 0;
+    return Number.isFinite(n) ? n : 0;
+  };
+  const scans = row(SCAN_COUNT_KEY);
+  const total = row(SCAN_TOKENS_KEY);
+  const avg = scans > 0 ? Math.round(total / scans) : 0;
+  return { scans, avgTokensPerScan: avg, suggestedTokensPerCredit: avg * 2 };
+}
+
+/** Set the ratio to the suggested value (2× measured scan average). */
+export function calibrateTokensPerCredit(): number {
+  const { scans, suggestedTokensPerCredit } = getScanStats();
+  if (scans === 0 || suggestedTokensPerCredit <= 0) {
+    throw new Error("Zatiaľ nie je zmeraný žiadny sken — spusti aspoň jeden SCAN a skús znova");
+  }
+  setTokensPerCredit(suggestedTokensPerCredit);
+  return suggestedTokensPerCredit;
 }
 
 /** Manual top-up (admin action for now; payment provider later). */
@@ -125,6 +194,7 @@ export interface CreditSummary {
   tokensPerCredit: number;
   totalTokensUsed: number;
   totalCreditsSpent: number;
+  scanStats: ScanStats;
   ledger: (typeof creditLedger.$inferSelect)[];
 }
 
@@ -144,5 +214,5 @@ export function getCreditSummary(limit: number = 50): CreditSummary {
     .orderBy(desc(creditLedger.id))
     .limit(limit)
     .all();
-  return { balance, tokensPerCredit: getTokensPerCredit(), totalTokensUsed, totalCreditsSpent, ledger };
+  return { balance, tokensPerCredit: getTokensPerCredit(), totalTokensUsed, totalCreditsSpent, scanStats: getScanStats(), ledger };
 }

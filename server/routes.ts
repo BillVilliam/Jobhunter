@@ -6,7 +6,7 @@ import { runWatcher, runAllActiveWatchers, type RunWatcherResult, type ScanProgr
 import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
 import { resolveCountry } from "./locations.js";
 import { portalsForCountry } from "./portals/index.js";
-import { recordAiUsage, hasCredits, getCreditBalance, getCreditSummary, setTokensPerCredit, addCredits } from "./credits.js";
+import { recordAiUsage, hasCredits, getCreditBalance, getCreditSummary, setTokensPerCredit, addCredits, beginScanMeter, endScanMeter, calibrateTokensPerCredit } from "./credits.js";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -392,6 +392,17 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
     }
   });
 
+  // Set tokensPerCredit to 2× the measured average scan cost
+  // ("1 credit ≈ 1 scan, with reserve"). Requires at least one measured scan.
+  app.post("/api/credits/calibrate", (_req, res) => {
+    try {
+      const tokensPerCredit = calibrateTokensPerCredit();
+      res.json({ tokensPerCredit });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   app.post("/api/credits/topup", (req, res) => {
     const amount = Number(req.body?.amount);
     const details = typeof req.body?.details === "string" ? req.body.details : undefined;
@@ -463,7 +474,9 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
     const watcher = await storage.getWatcherConfig(id);
     if (!watcher) return res.status(404).json({ error: "Watcher not found" });
     try {
+      beginScanMeter();
       const result = await runWatcher(id);
+      endScanMeter();
       res.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -582,6 +595,7 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
         let totalSaved = 0;
         let totalNewJobs = 0;
 
+        beginScanMeter();
         for (const w of active) {
           if (abortController.signal.aborted) break;
 
@@ -605,8 +619,10 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
           totalNewJobs += watcherNewJobs;
         }
 
+        endScanMeter();
         sendEvent({ type: abortController.signal.aborted ? "cancelled" : "done", totalFound, totalSaved, results });
       } catch (err: unknown) {
+        endScanMeter();
         const message = err instanceof Error ? err.message : String(err);
         sendEvent({ type: "error", error: message });
       }
@@ -623,12 +639,14 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
         const results: { watcherId: number; watcherName: string; result: RunWatcherResult }[] = [];
         let totalFound = 0;
         let totalSaved = 0;
+        beginScanMeter();
         for (const w of active) {
           const result = await runWatcher(w.id);
           results.push({ watcherId: w.id, watcherName: w.name, result });
           totalFound += result.found;
           totalSaved += result.saved;
         }
+        endScanMeter();
         res.json({ totalFound, totalSaved, results });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
