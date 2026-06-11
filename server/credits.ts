@@ -27,6 +27,78 @@ export const DEFAULT_STARTER_CREDITS = 100;
 
 const TOKENS_PER_CREDIT_KEY = "tokensPerCredit";
 
+/**
+ * Fixed price per AI action, in credits. Scan = 1 by definition; the others
+ * are cheaper because they're a single small AI call. All adjustable at
+ * runtime via PATCH /api/credits/settings — no deploy needed.
+ */
+export interface ActionPrices {
+  scan: number;
+  coverLetter: number;
+  cvAnalysis: number;
+}
+
+export const DEFAULT_ACTION_PRICES: ActionPrices = {
+  scan: 1,
+  coverLetter: 0.1,
+  cvAnalysis: 0.2,
+};
+
+const ACTION_PRICES_KEY = "actionPrices";
+
+export function getActionPrices(): ActionPrices {
+  const row = db.select().from(appSettings).where(eq(appSettings.key, ACTION_PRICES_KEY)).get();
+  if (!row) return { ...DEFAULT_ACTION_PRICES };
+  try {
+    const stored = JSON.parse(row.value) as Partial<ActionPrices>;
+    return { ...DEFAULT_ACTION_PRICES, ...stored };
+  } catch {
+    return { ...DEFAULT_ACTION_PRICES };
+  }
+}
+
+export function setActionPrices(prices: Partial<ActionPrices>): ActionPrices {
+  for (const [k, v] of Object.entries(prices)) {
+    if (!Number.isFinite(v) || (v as number) < 0) {
+      throw new Error(`Cena pre "${k}" musí byť číslo >= 0`);
+    }
+  }
+  const merged = { ...getActionPrices(), ...prices };
+  const now = new Date().toISOString();
+  db.insert(appSettings)
+    .values({ key: ACTION_PRICES_KEY, value: JSON.stringify(merged), updatedAt: now })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: JSON.stringify(merged), updatedAt: now },
+    })
+    .run();
+  return merged;
+}
+
+const ACTION_LEDGER_NAMES: Record<keyof ActionPrices, string> = {
+  scan: "scan",
+  coverLetter: "cover-letter",
+  cvAnalysis: "cv-analysis",
+};
+
+/**
+ * Charge the fixed price of an action. tokensUsed is recorded alongside for
+ * cost monitoring (real API cost vs. the credit price we charge).
+ */
+export function chargeAction(action: keyof ActionPrices, tokensUsed: number, details?: string): void {
+  const price = getActionPrices()[action];
+  if (price <= 0 && tokensUsed <= 0) return;
+  db.insert(creditLedger)
+    .values({
+      action: ACTION_LEDGER_NAMES[action],
+      tokensUsed: tokensUsed > 0 ? tokensUsed : 0,
+      creditsDelta: -price,
+      details: details?.slice(0, 200) ?? null,
+      timestamp: new Date().toISOString(),
+    })
+    .run();
+}
+
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
@@ -87,22 +159,12 @@ export function hasCredits(): boolean {
 }
 
 /**
- * Record AI token usage and deduct the corresponding credits.
- * Call after every AI API response (usage.total_tokens).
+ * Record raw AI token usage for measurement (feeds the active scan meter).
+ * Charging happens per ACTION with fixed prices (chargeAction), not per token.
  */
-export function recordAiUsage(action: string, tokensUsed: number, details?: string): void {
+export function recordAiUsage(_action: string, tokensUsed: number, _details?: string): void {
   if (!tokensUsed || tokensUsed <= 0) return;
   if (activeMeterTokens != null) activeMeterTokens += tokensUsed;
-  const creditsDelta = -(tokensUsed / getTokensPerCredit());
-  db.insert(creditLedger)
-    .values({
-      action,
-      tokensUsed,
-      creditsDelta,
-      details: details?.slice(0, 200) ?? null,
-      timestamp: new Date().toISOString(),
-    })
-    .run();
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +254,7 @@ export function addCredits(amount: number, details?: string): void {
 export interface CreditSummary {
   balance: number;
   tokensPerCredit: number;
+  actionPrices: ActionPrices;
   totalTokensUsed: number;
   totalCreditsSpent: number;
   scanStats: ScanStats;
@@ -214,5 +277,5 @@ export function getCreditSummary(limit: number = 50): CreditSummary {
     .orderBy(desc(creditLedger.id))
     .limit(limit)
     .all();
-  return { balance, tokensPerCredit: getTokensPerCredit(), totalTokensUsed, totalCreditsSpent, scanStats: getScanStats(), ledger };
+  return { balance, tokensPerCredit: getTokensPerCredit(), actionPrices: getActionPrices(), totalTokensUsed, totalCreditsSpent, scanStats: getScanStats(), ledger };
 }

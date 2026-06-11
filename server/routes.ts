@@ -6,7 +6,7 @@ import { runWatcher, runAllActiveWatchers, type RunWatcherResult, type ScanProgr
 import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
 import { resolveCountry } from "./locations.js";
 import { portalsForCountry } from "./portals/index.js";
-import { recordAiUsage, hasCredits, getCreditBalance, getCreditSummary, setTokensPerCredit, addCredits, beginScanMeter, endScanMeter, calibrateTokensPerCredit } from "./credits.js";
+import { chargeAction, hasCredits, getCreditBalance, getCreditSummary, setTokensPerCredit, setActionPrices, addCredits, beginScanMeter, endScanMeter, calibrateTokensPerCredit } from "./credits.js";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -100,7 +100,7 @@ export async function registerRoutes(
           },
         ],
       });
-      recordAiUsage("vision-ocr", ocrResponse.usage?.total_tokens ?? 0, `CV analyze: ${cv.name}`);
+      const ocrTokens = ocrResponse.usage?.total_tokens ?? 0;
       const cvText = (ocrResponse.choices[0]?.message?.content || "").trim();
       if (!cvText) {
         return res.status(500).json({ error: "Z obrázka CV sa nepodarilo vytiahnuť text" });
@@ -144,7 +144,7 @@ For suggestedSearchTerms: provide 10-15 concrete job search keywords in Czech/Sl
         ],
       });
 
-      recordAiUsage("cv-analysis", response.usage?.total_tokens ?? 0, cv.name);
+      chargeAction("cvAnalysis", ocrTokens + (response.usage?.total_tokens ?? 0), cv.name);
       const analysisText = response.choices[0]?.message?.content || "{}";
       let analysis: Record<string, unknown>;
       try {
@@ -282,7 +282,7 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
         ],
       });
 
-      recordAiUsage("cover-letter", response.usage?.total_tokens ?? 0, `${job.title} @ ${job.company}`);
+      chargeAction("coverLetter", response.usage?.total_tokens ?? 0, `${job.title} @ ${job.company}`);
       const generatedText = response.choices[0]?.message?.content || "";
       res.json({
         content: generatedText,
@@ -383,10 +383,16 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
   });
 
   app.patch("/api/credits/settings", (req, res) => {
-    const tokensPerCredit = Number(req.body?.tokensPerCredit);
     try {
-      setTokensPerCredit(tokensPerCredit);
-      res.json({ tokensPerCredit });
+      const out: Record<string, unknown> = {};
+      if (req.body?.tokensPerCredit != null) {
+        setTokensPerCredit(Number(req.body.tokensPerCredit));
+        out.tokensPerCredit = Number(req.body.tokensPerCredit);
+      }
+      if (req.body?.prices != null && typeof req.body.prices === "object") {
+        out.actionPrices = setActionPrices(req.body.prices);
+      }
+      res.json(out);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -476,7 +482,8 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
     try {
       beginScanMeter();
       const result = await runWatcher(id);
-      endScanMeter();
+      const tokens = endScanMeter();
+      if (tokens > 0) chargeAction("scan", tokens, `Watcher: ${watcher.name}`);
       res.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -619,10 +626,12 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
           totalNewJobs += watcherNewJobs;
         }
 
-        endScanMeter();
+        const tokens = endScanMeter();
+        if (tokens > 0) chargeAction("scan", tokens, `SCAN: ${active.length} watcherov`);
         sendEvent({ type: abortController.signal.aborted ? "cancelled" : "done", totalFound, totalSaved, results });
       } catch (err: unknown) {
-        endScanMeter();
+        const tokens = endScanMeter();
+        if (tokens > 0) chargeAction("scan", tokens, "SCAN (prerušený chybou)");
         const message = err instanceof Error ? err.message : String(err);
         sendEvent({ type: "error", error: message });
       }
@@ -646,7 +655,8 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
           totalFound += result.found;
           totalSaved += result.saved;
         }
-        endScanMeter();
+        const tokens = endScanMeter();
+        if (tokens > 0) chargeAction("scan", tokens, `SCAN: ${active.length} watcherov`);
         res.json({ totalFound, totalSaved, results });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

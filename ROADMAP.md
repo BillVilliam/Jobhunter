@@ -46,11 +46,15 @@
       no credits → scan and AI actions are refused (HTTP 402).
 - [x] Credit ledger table: userId (ready for accounts), action, tokensUsed,
       creditsDelta, timestamp.
-- [x] **Pricing model decided: 1 credit ≈ 1 scan.** The app measures the real
-      token cost of every scan; the suggested ratio is 2× the measured average
-      (safety reserve). After a few real scans, call
-      `POST /api/credits/calibrate` to apply it (stats visible in
-      `GET /api/credits` → scanStats).
+- [x] **Pricing model decided: fixed price per action.**
+      Scan = 1 credit | cover letter = 0.1 | CV analysis = 0.2.
+      These are the ONLY AI-consuming actions in the app — everything else
+      (browsing jobs, favorites, watcher config) is free and stays free.
+      Prices adjustable at runtime: `PATCH /api/credits/settings`
+      `{ "prices": { "scan": 1, "coverLetter": 0.1, "cvAnalysis": 0.2 } }`.
+      Token usage is still measured per charge for cost monitoring; scan
+      stats + 2×-reserve calibration (`POST /api/credits/calibrate`) tell us
+      what a credit is worth in real API tokens.
 - [ ] Decide the starter credit amount (still placeholder 100).
 - [ ] Per-user balances once accounts/auth land; payment provider (Stripe)
       only if/when needed.
