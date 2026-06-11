@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Eye, Plus, Trash2, Play, Pause, MapPin, Zap, Loader2, Laptop, Briefcase, Settings, X, PencilLine, Navigation, Sparkles } from "lucide-react";
+import { Eye, Plus, Trash2, Play, Pause, MapPin, Zap, Loader2, Laptop, Briefcase, Settings, X, PencilLine, Navigation, Sparkles, LocateFixed } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { WatcherConfig, CvVersion } from "@shared/schema";
@@ -117,6 +117,8 @@ export default function Watchers() {
   const [editLocation, setEditLocation] = useState("");
   const [editCoords, setEditCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocodingEdit, setGeocodingEdit] = useState(false);
+  const [detectingCreate, setDetectingCreate] = useState(false);
+  const [detectingEdit, setDetectingEdit] = useState(false);
   // Country selection ("auto" | "cz" | "sk" | "both")
   const [createCountry, setCreateCountry] = useState("auto");
   const [editCountry, setEditCountry] = useState("auto");
@@ -176,6 +178,49 @@ export default function Watchers() {
       setEditCoords(result);
     }
     setGeocodingEdit(false);
+  };
+
+  // Browser geolocation with manual fallback: if the user denies the
+  // permission (or it fails), the text input keeps working as before.
+  const detectMyLocation = (target: "create" | "edit") => {
+    const setDetecting = target === "create" ? setDetectingCreate : setDetectingEdit;
+    const setLoc = target === "create" ? setCreateLocation : setEditLocation;
+    const setCoords = target === "create" ? setCreateCoords : setEditCoords;
+
+    if (!navigator.geolocation) {
+      toast({ title: "Poloha nie je podporovaná", description: "Tvoj prehliadač nepodporuje zisťovanie polohy — zadaj lokáciu manuálne." });
+      return;
+    }
+    setDetecting(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        // Reverse-geocode to a readable city name (best effort — coords alone are enough)
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=10`,
+            { headers: { "User-Agent": "JobHunter/1.0 (job search app)" } }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const a = data.address ?? {};
+            const city = a.city ?? a.town ?? a.village ?? a.municipality ?? data.name;
+            if (city) setLoc(city);
+          }
+        } catch { /* keep whatever is typed in the input */ }
+        setCoords(coords);
+        setDetecting(false);
+        toast({ title: "📍 Poloha zistená", description: "Lokáciu môžeš kedykoľvek upraviť manuálne." });
+      },
+      (err) => {
+        setDetecting(false);
+        toast({
+          title: err.code === err.PERMISSION_DENIED ? "Prístup k polohe zamietnutý" : "Polohu sa nepodarilo zistiť",
+          description: "Žiadny problém — zadaj mesto alebo adresu manuálne do poľa Lokácia.",
+        });
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    );
   };
 
   const { data: watchers = [], isLoading } = useQuery<WatcherConfig[]>({
@@ -661,6 +706,18 @@ export default function Watchers() {
                     {geocodingCreate ? <Loader2 className="w-3 h-3 animate-spin" /> : <Navigation className="w-3 h-3" />}
                     Overiť
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 text-xs gap-1 px-2.5 shrink-0"
+                    onClick={() => detectMyLocation("create")}
+                    disabled={detectingCreate}
+                    title="Použiť moju polohu (ak ju zamietneš, zadaj lokáciu manuálne)"
+                  >
+                    {detectingCreate ? <Loader2 className="w-3 h-3 animate-spin" /> : <LocateFixed className="w-3 h-3" />}
+                    Moja poloha
+                  </Button>
                 </div>
                 {createCoords ? (
                   <p className="text-[10px] text-green-600 dark:text-green-400 flex items-center gap-1">
@@ -947,6 +1004,18 @@ export default function Watchers() {
                   >
                     {geocodingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <Navigation className="w-3 h-3" />}
                     Overiť
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 text-xs gap-1 px-2.5 shrink-0"
+                    onClick={() => detectMyLocation("edit")}
+                    disabled={detectingEdit}
+                    title="Použiť moju polohu (ak ju zamietneš, zadaj lokáciu manuálne)"
+                  >
+                    {detectingEdit ? <Loader2 className="w-3 h-3 animate-spin" /> : <LocateFixed className="w-3 h-3" />}
+                    Moja poloha
                   </Button>
                 </div>
                 {editCoords ? (
