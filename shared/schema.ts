@@ -63,6 +63,7 @@ export const watcherConfigs = sqliteTable("watcher_configs", {
   portal: text("portal").notNull(), // jobs.cz, startupjobs.cz
   searchQuery: text("search_query").notNull(), // search keywords
   location: text("location").default("Praha"),
+  country: text("country").default("auto"), // auto | cz | sk | both — which country's portals to scan
   locationLat: real("location_lat"),  // exact user lat for distance scoring
   locationLng: real("location_lng"),  // exact user lng for distance scoring
   minSalary: integer("min_salary"),

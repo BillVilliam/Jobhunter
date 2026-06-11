@@ -69,6 +69,29 @@ const REMOTE_OPTIONS = [
   { value: "any",     label: "Akýkoľvek" },
 ];
 
+const COUNTRY_OPTIONS = [
+  { value: "auto", label: "🌐 Automaticky (podľa lokality)" },
+  { value: "cz",   label: "🇨🇿 Česko" },
+  { value: "sk",   label: "🇸🇰 Slovensko" },
+  { value: "both", label: "🇨🇿+🇸🇰 Obe krajiny" },
+];
+
+const COUNTRY_FLAGS: Record<string, string> = {
+  cz: "🇨🇿",
+  sk: "🇸🇰",
+  both: "🇨🇿🇸🇰",
+  auto: "🌐",
+};
+
+const countryTitle = (v: string) =>
+  `Krajina: ${COUNTRY_OPTIONS.find((o) => o.value === v)?.label.replace(/^\S+\s/, "") ?? v}`;
+
+interface PortalsResponse {
+  country: "cz" | "sk" | "both";
+  autoDetected: boolean;
+  portals: { id: string; name: string; country: string }[];
+}
+
 export default function Watchers() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editWatcher, setEditWatcher] = useState<WatcherConfig | null>(null);
@@ -94,6 +117,9 @@ export default function Watchers() {
   const [editLocation, setEditLocation] = useState("");
   const [editCoords, setEditCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocodingEdit, setGeocodingEdit] = useState(false);
+  // Country selection ("auto" | "cz" | "sk" | "both")
+  const [createCountry, setCreateCountry] = useState("auto");
+  const [editCountry, setEditCountry] = useState("auto");
   const { toast } = useToast();
 
   // Geocode a location string using Nominatim (with retry on rate limit)
@@ -160,6 +186,23 @@ export default function Watchers() {
     queryKey: ["/api/cv-versions"],
   });
 
+  // Portal preview — which job portals will be scanned for the chosen location/country
+  const { data: createPortals } = useQuery<PortalsResponse>({
+    queryKey: ["/api/portals", createLocation, createCountry],
+    queryFn: () =>
+      fetch(`/api/portals?location=${encodeURIComponent(createLocation)}&country=${createCountry}`)
+        .then((r) => r.json()),
+    enabled: isAddOpen,
+  });
+
+  const { data: editPortals } = useQuery<PortalsResponse>({
+    queryKey: ["/api/portals", editLocation, editCountry],
+    queryFn: () =>
+      fetch(`/api/portals?location=${encodeURIComponent(editLocation)}&country=${editCountry}`)
+        .then((r) => r.json()),
+    enabled: editWatcher !== null,
+  });
+
   // Get CVs that have analysis
   const analyzedCvs = cvVersions.filter((cv) => {
     try { return !!JSON.parse((cv as any).cvAnalysis || "null"); } catch { return false; }
@@ -215,6 +258,7 @@ export default function Watchers() {
     setEditLocation(watcher.location ?? "Praha");
     const w = watcher as any;
     setEditCoords(w.locationLat && w.locationLng ? { lat: w.locationLat, lng: w.locationLng } : null);
+    setEditCountry((watcher as any).country ?? "auto");
     setEditWatcher(watcher);
     setAddingCustomFor(null);
     setEditingCustomId(null);
@@ -234,6 +278,7 @@ export default function Watchers() {
         location: editLocation || "Praha",
         locationLat: editCoords?.lat ?? null,
         locationLng: editCoords?.lng ?? null,
+        country: editCountry,
         jobType: jobType === "any" ? null : jobType,
         remoteOption: remoteOption === "any" ? null : remoteOption,
         jobCategories: JSON.stringify(editCategories),
@@ -257,6 +302,7 @@ export default function Watchers() {
       location: createLocation || "Praha",
       locationLat: createCoords?.lat ?? null,
       locationLng: createCoords?.lng ?? null,
+      country: createCountry,
       jobType: jobType === "any" ? null : jobType,
       remoteOption: remoteOption === "any" ? null : remoteOption,
       excludeKeywords: "[]",
@@ -339,6 +385,22 @@ export default function Watchers() {
     setEditCustomLabel("");
     setEditCustomTerms("");
     setEditCustomEmoji("🔍");
+  };
+
+  // ── Portal preview — shows which portals will be scanned for the chosen country ──
+  const PortalPreview = ({ data, selectedCountry }: { data: PortalsResponse | undefined; selectedCountry: string }) => {
+    if (!data || !Array.isArray(data.portals) || data.portals.length === 0) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground">
+        {selectedCountry === "auto" && <span className="text-[10px]">Zistené:</span>}
+        <span>{COUNTRY_FLAGS[data.country] ?? "🌐"}</span>
+        {data.portals.map((p) => (
+          <Badge key={p.id} variant="secondary" className="text-[10px] px-1.5 py-0">
+            {p.name}
+          </Badge>
+        ))}
+      </div>
+    );
   };
 
   // ── Category list component — all categories are uniform, editable, deletable ──
@@ -613,6 +675,22 @@ export default function Watchers() {
                 ) : null}
               </div>
 
+              {/* ── Country ── */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Krajina</Label>
+                <Select value={createCountry} onValueChange={setCreateCountry}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <PortalPreview data={createPortals} selectedCountry={createCountry} />
+              </div>
+
               {/* Name (optional – auto-generated from categories if empty) */}
               <div className="space-y-1.5">
                 <Label htmlFor="name" className="text-xs text-muted-foreground">Názov (nepovinný)</Label>
@@ -727,6 +805,9 @@ export default function Watchers() {
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
                           {watcher.location}
+                          <span title={countryTitle((watcher as any).country ?? "auto")}>
+                            {COUNTRY_FLAGS[(watcher as any).country ?? "auto"] ?? "🌐"}
+                          </span>
                           {(watcher as any).locationLat && (
                             <span className="text-green-600 dark:text-green-400" title={`GPS: ${(watcher as any).locationLat?.toFixed(4)}, ${(watcher as any).locationLng?.toFixed(4)}`}>📍</span>
                           )}
@@ -879,6 +960,22 @@ export default function Watchers() {
                     GPS neoverené — funguje aj bez overenia, AI použije názov mesta
                   </p>
                 ) : null}
+              </div>
+
+              {/* Country */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Krajina</Label>
+                <Select value={editCountry} onValueChange={setEditCountry}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <PortalPreview data={editPortals} selectedCountry={editCountry} />
               </div>
 
               {/* Name */}

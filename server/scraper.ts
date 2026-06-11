@@ -10,30 +10,33 @@
  *   3. Work mode preference (hybrid/remote/onsite)
  *   4. Category relevance
  *
- * Supported portals:  jobs.cz (HTML)  |  startupjobs.cz (JSON API)  |  prace.cz (HTML)
+ * Supported portals:  CZ — jobs.cz | prace.cz | startupjobs.cz
+ *                      SK — profesia.sk | kariera.sk (startupjobs.cz covers both)
+ *                      Portal selection is country-aware: the watcher's location
+ *                      (or explicit country setting) decides which portals run.
  * AI model:           deepseek-v4-pro (DeepSeek) — vision/OCR via gpt-4.1-mini (OpenAI)
  */
 
-import * as cheerio from "cheerio";
 import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
 import { db } from "./storage.js";
 import { jobListings, watcherConfigs, cvVersions } from "@shared/schema.js";
 import { eq } from "drizzle-orm";
+import {
+  geocodeLocation,
+  extractCityFromLocation,
+  estimateDistanceKm,
+  distanceScoreModifier,
+  resolveCountry,
+  findCity,
+  type GeoCoords,
+} from "./locations.js";
+import { portalsForCountry, type ScrapedJob, type PortalCountry } from "./portals/index.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ScrapedJob {
-  externalId: string;
-  title: string;
-  company: string;
-  location: string;
-  description: string;
-  salary?: string;
-  url: string;
-  portal: string;
-}
+export type { ScrapedJob } from "./portals/index.js";
 
 export interface AiAnalysis {
   score: number;
@@ -87,38 +90,6 @@ const CATEGORY_SEARCH_TERMS: Record<JobCategory, string[]> = {
 };
 
 // ---------------------------------------------------------------------------
-// Common fetch helper
-// ---------------------------------------------------------------------------
-
-const BROWSER_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-
-async function safeFetch(
-  url: string,
-  accept: string = "text/html",
-): Promise<Response | null> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: accept,
-        "Accept-Language": "cs,en;q=0.9",
-      },
-      redirect: "follow",
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) {
-      console.warn(`[scraper] HTTP ${res.status} for ${url}`);
-      return null;
-    }
-    return res;
-  } catch (err) {
-    console.error(`[scraper] fetch error for ${url}:`, err);
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Image-based CV text extraction (OpenAI Vision)
 // ---------------------------------------------------------------------------
 
@@ -155,483 +126,6 @@ async function extractTextFromImage(base64DataUrl: string): Promise<string> {
     console.error("[scraper] Image text extraction failed:", err);
     return "";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Geocoding — resolve location string → { lat, lng }
-// Uses free Nominatim API (OpenStreetMap)
-// ONLY used for the user's watcher location (single call), NOT for job locations
-// ---------------------------------------------------------------------------
-
-interface GeoCoords { lat: number; lng: number }
-
-const geocodeCache = new Map<string, GeoCoords | null>();
-
-async function geocodeLocation(location: string): Promise<GeoCoords | null> {
-  const key = location.toLowerCase().trim();
-  if (geocodeCache.has(key)) return geocodeCache.get(key) ?? null;
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1&countrycodes=cz,sk`;
-      const res = await fetch(url, {
-        headers: { "User-Agent": "JobHunter/1.0 (job search app)" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res.status === 429) {
-        console.warn(`[scraper] Nominatim rate-limited (attempt ${attempt + 1}/3)`);
-        continue;
-      }
-      if (!res.ok) continue;
-      const data: { lat: string; lon: string }[] = await res.json();
-      if (data.length === 0) { geocodeCache.set(key, null); return null; }
-      const coords: GeoCoords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-      geocodeCache.set(key, coords);
-      return coords;
-    } catch {
-      if (attempt < 2) continue;
-    }
-  }
-  console.warn(`[scraper] Geocoding failed for "${location}" after 3 attempts`);
-  geocodeCache.set(key, null);
-  return null;
-}
-
-/** Haversine distance in km between two lat/lng points */
-function haversineKm(a: GeoCoords, b: GeoCoords): number {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const R = 6371;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const sin2Lat = Math.sin(dLat / 2) ** 2;
-  const sin2Lng = Math.sin(dLng / 2) ** 2;
-  const h = sin2Lat + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * sin2Lng;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
-// ---------------------------------------------------------------------------
-// Fast city-based distance estimation (NO Nominatim for job locations)
-// Compares the user's search city with the job's location string
-// ---------------------------------------------------------------------------
-
-/** Approximate coordinates for major Czech/Slovak cities */
-const CITY_COORDS: Record<string, GeoCoords> = {
-  praha:    { lat: 50.0755, lng: 14.4378 },
-  brno:     { lat: 49.1951, lng: 16.6068 },
-  ostrava:  { lat: 49.8209, lng: 18.2625 },
-  plzeň:    { lat: 49.7384, lng: 13.3736 },
-  olomouc:  { lat: 49.5938, lng: 17.2509 },
-  liberec:  { lat: 50.7671, lng: 15.0562 },
-  pardubice:{ lat: 50.0343, lng: 15.7812 },
-  zlín:     { lat: 49.2268, lng: 17.6673 },
-  bratislava:{ lat: 48.1486, lng: 17.1077 },
-  košice:   { lat: 48.7164, lng: 21.2611 },
-};
-
-/**
- * Estimate distance between user's city and a job location string.
- * Returns km or null if can't determine.
- * This is FAST — no API calls, pure string matching.
- */
-function estimateDistanceKm(
-  userCity: string,
-  userCoords: GeoCoords | null,
-  jobLocation: string,
-): number | null {
-  if (!jobLocation) return null;
-
-  const userCityLower = userCity.toLowerCase().trim();
-  const jobLower = jobLocation.toLowerCase().trim();
-
-  // If job location contains the user's city → same city, estimate 5-10 km
-  if (jobLower.includes(userCityLower) || userCityLower.includes(jobLower.split("–")[0].trim())) {
-    return 5; // Same city
-  }
-
-  // Check known city names → extract the city from job location
-  const jobCity = extractCityFromLocation(jobLocation).toLowerCase();
-
-  if (jobCity === userCityLower) return 5; // Same city after extraction
-
-  // If we have user coords and the job city has known coords → haversine
-  if (userCoords && CITY_COORDS[jobCity]) {
-    return Math.round(haversineKm(userCoords, CITY_COORDS[jobCity]));
-  }
-
-  // If both are known cities → haversine between known coords
-  if (CITY_COORDS[userCityLower] && CITY_COORDS[jobCity]) {
-    return Math.round(haversineKm(CITY_COORDS[userCityLower], CITY_COORDS[jobCity]));
-  }
-
-  // Check if job mentions "remote" / "home office" → distance doesn't matter
-  if (jobLower.includes("remote") || jobLower.includes("home office")) return 0;
-
-  // Can't determine
-  return null;
-}
-
-/** Distance score modifier: 0-5 km = +10, 5-15 km = +5, 15-30 km = 0, 30+ km = -5 */
-function distanceScoreModifier(km: number | null): number {
-  if (km == null) return 0;
-  if (km <= 5) return 10;
-  if (km <= 15) return 5;
-  if (km <= 30) return 0;
-  return -5;
-}
-
-// ---------------------------------------------------------------------------
-// Extract city name from a full address string
-// "Hartigova 93, 130 00 Praha 3" → "Praha"
-// "Brno" → "Brno"
-// ---------------------------------------------------------------------------
-
-const KNOWN_CITIES: Record<string, string> = {
-  praha: "Praha",
-  prague: "Praha",
-  brno: "Brno",
-  ostrava: "Ostrava",
-  plzeň: "Plzeň",
-  plzen: "Plzeň",
-  olomouc: "Olomouc",
-  liberec: "Liberec",
-  "české budějovice": "České Budějovice",
-  "ceske budejovice": "České Budějovice",
-  "hradec králové": "Hradec Králové",
-  "hradec kralove": "Hradec Králové",
-  pardubice: "Pardubice",
-  zlín: "Zlín",
-  zlin: "Zlín",
-  "ústí nad labem": "Ústí nad Labem",
-  "usti nad labem": "Ústí nad Labem",
-  "karlovy vary": "Karlovy Vary",
-  jihlava: "Jihlava",
-  kladno: "Kladno",
-  teplice: "Teplice",
-  opava: "Opava",
-  děčín: "Děčín",
-  decin: "Děčín",
-  frýdek: "Frýdek-Místek",
-  "frýdek-místek": "Frýdek-Místek",
-  mladá: "Mladá Boleslav",
-  "mladá boleslav": "Mladá Boleslav",
-};
-
-function extractCityFromLocation(location: string): string {
-  if (!location) return "Praha";
-  const lower = location.toLowerCase().trim();
-
-  // Direct known city match?
-  if (KNOWN_CITIES[lower]) return KNOWN_CITIES[lower];
-
-  // Search for known city names within the location string
-  for (const [key, city] of Object.entries(KNOWN_CITIES)) {
-    if (lower.includes(key)) return city;
-  }
-
-  // If it has a comma, try the last significant part (city is often last)
-  // e.g. "Hartigova 93, 130 00 Praha 3" → try "Praha 3" → strip trailing digits → "Praha"
-  const parts = location.split(",").map(s => s.trim());
-  if (parts.length > 1) {
-    const lastPart = parts[parts.length - 1];
-    // Strip postal code prefix (e.g., "130 00 Praha 3" → "Praha 3")
-    const withoutPostal = lastPart.replace(/^\d{3}\s?\d{2}\s*/, "").trim();
-    // Strip trailing district number (e.g., "Praha 3" → "Praha")
-    const withoutDistrict = withoutPostal.replace(/\s+\d+$/, "").trim();
-    if (withoutDistrict) {
-      // Check if it's a known city
-      const lowerCity = withoutDistrict.toLowerCase();
-      if (KNOWN_CITIES[lowerCity]) return KNOWN_CITIES[lowerCity];
-      return withoutDistrict;
-    }
-  }
-
-  // Fallback — return as-is
-  return location.trim();
-}
-
-// ---------------------------------------------------------------------------
-// jobs.cz – HTML scraping
-// ---------------------------------------------------------------------------
-
-async function scrapeJobsCz(
-  query: string,
-  location: string = "Praha",
-  maxPages: number = 2,
-): Promise<ScrapedJob[]> {
-  const loc = location.toLowerCase().replace(/\s+/g, "-");
-  const allJobs: ScrapedJob[] = [];
-
-  for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams();
-    params.set("q[]", query);
-    if (page > 1) params.set("page", String(page));
-
-    const url = `https://www.jobs.cz/prace/${encodeURIComponent(loc)}/?${params.toString()}`;
-    console.log(`[scraper] jobs.cz → ${url}`);
-
-    const res = await safeFetch(url);
-    if (!res) break;
-
-    const html = await res.text();
-    const $ = cheerio.load(html);
-
-    let pageCount = 0;
-
-    $("article.SearchResultCard").each((_i, el) => {
-      const $el = $(el);
-
-      const $titleLink = $el.find("a.SearchResultCard__titleLink");
-      const title = $titleLink.text().trim();
-      let jobUrl = $titleLink.attr("href") ?? "";
-      if (jobUrl && !jobUrl.startsWith("http")) {
-        jobUrl = `https://www.jobs.cz${jobUrl}`;
-      }
-
-      const jobAdId = $titleLink.attr("data-jobad-id") ?? `${Date.now()}-${_i}`;
-
-      const company =
-        $el.find(".SearchResultCard__footerItem span[translate='no']").first().text().trim() || "Neznáma firma";
-
-      const locationText =
-        $el.find("[data-test='serp-locality']").text().trim() || location;
-
-      const salary =
-        $el.find(".Tag--success").first().text().replace(/\u200D/g, "").replace(/\s+/g, " ").trim() || undefined;
-
-      const dateText = $el.find(".SearchResultCard__status").first().text().trim();
-
-      if (title) {
-        allJobs.push({
-          externalId: `jobscz-${jobAdId}`,
-          title,
-          company,
-          location: locationText,
-          description: dateText ? `Zverejnené: ${dateText}` : "",
-          salary,
-          url: jobUrl,
-          portal: "jobs.cz",
-        });
-        pageCount++;
-      }
-    });
-
-    // If this page had no results, don't fetch more pages
-    if (pageCount === 0) break;
-  }
-
-  console.log(`[scraper] jobs.cz found ${allJobs.length} results for "${query}" (${maxPages} pages)`);
-  return allJobs;
-}
-
-// ---------------------------------------------------------------------------
-// startupjobs.cz – JSON API
-// ---------------------------------------------------------------------------
-
-async function scrapeStartupJobsCz(
-  query: string,
-  location: string = "Praha",
-  maxPages: number = 2,
-): Promise<ScrapedJob[]> {
-  const allJobs: ScrapedJob[] = [];
-
-  for (let page = 1; page <= maxPages; page++) {
-    const params = new URLSearchParams({ q: query, page: String(page) });
-    const url = `https://www.startupjobs.cz/api/offers?${params.toString()}`;
-
-    console.log(`[scraper] startupjobs.cz → ${url}`);
-
-    const res = await safeFetch(url, "application/json, text/html");
-    if (!res) break;
-
-    let data: any;
-    try {
-      data = await res.json();
-    } catch {
-      console.error("[scraper] startupjobs.cz JSON parse error");
-      break;
-    }
-
-    // The API returns { resultSet: [...], resultCount, ... }
-    const offers: any[] = Array.isArray(data)
-      ? data
-      : Array.isArray(data?.resultSet)
-        ? data.resultSet
-        : [];
-
-    if (offers.length === 0) break;
-
-    for (const j of offers) {
-      const title: string = j.name ?? j.title ?? "";
-      if (!title) continue;
-
-      // Filter by location if user specified one
-      const offerLocations: string = j.locations ?? j.city ?? "";
-      if (
-        location &&
-        location.toLowerCase() !== "all" &&
-        offerLocations &&
-        !offerLocations.toLowerCase().includes(location.toLowerCase())
-      ) {
-        continue;
-      }
-
-      // Extract salary
-      let salary: string | undefined;
-      if (j.salary) {
-        if (typeof j.salary === "string") {
-          salary = j.salary;
-        } else if (j.salary.min || j.salary.max) {
-          const min = j.salary.min
-            ? `${(j.salary.min / 1000).toFixed(0)}k`
-            : "?";
-          const max = j.salary.max
-            ? `${(j.salary.max / 1000).toFixed(0)}k`
-            : "?";
-          const curr = j.salary.currency ?? "CZK";
-          salary = `${min} – ${max} ${curr}`;
-        }
-      }
-
-      // Strip HTML from description for AI analysis
-      const rawDesc: string = j.description ?? j.perex ?? "";
-      const cleanDesc = rawDesc
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&nbsp;/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 1500);
-
-      const slug: string = j.url ?? j.slug ?? "";
-      const jobUrl = slug.startsWith("http")
-        ? slug
-        : `https://www.startupjobs.cz${slug}`;
-
-      allJobs.push({
-        externalId: `startupjobs-${j.id ?? Date.now()}`,
-        title,
-        company: j.company ?? j.companyName ?? "Neznáma firma",
-        location: offerLocations || location,
-        description: cleanDesc,
-        salary,
-        url: jobUrl,
-        portal: "startupjobs.cz",
-      });
-    }
-  }
-
-  console.log(
-    `[scraper] startupjobs.cz found ${allJobs.length} results for "${query}" (${location})`,
-  );
-  return allJobs;
-}
-
-// ---------------------------------------------------------------------------
-// prace.cz – HTML scraping
-// ---------------------------------------------------------------------------
-
-export async function scrapePraceCz(
-  query: string,
-  location: string = "Praha",
-  maxPages: number = 2,
-): Promise<ScrapedJob[]> {
-  // prace.cz redesign (2026): keyword-in-path slugs are ignored; the search
-  // now uses a `q[]=` query param (same format as jobs.cz — both run on LMC).
-  const q = `q%5B%5D=${encodeURIComponent(query)}`;
-  const locLower = location.toLowerCase().trim();
-
-  // Build base URL — locality path slugs still work, keyword goes into ?q[]=
-  let baseUrl: string;
-  if (!locLower || locLower === "all") {
-    baseUrl = `https://www.prace.cz/nabidky/?${q}`;
-  } else if (locLower === "praha" || locLower === "prague") {
-    baseUrl = `https://www.prace.cz/nabidky/hlavni-mesto-praha/praha/?${q}`;
-  } else if (locLower === "brno") {
-    baseUrl = `https://www.prace.cz/nabidky/jihomoravsky-kraj/brno/?${q}`;
-  } else if (locLower === "ostrava") {
-    baseUrl = `https://www.prace.cz/nabidky/moravskoslezsky-kraj/ostrava/?${q}`;
-  } else if (locLower === "plzeň" || locLower === "plzen") {
-    baseUrl = `https://www.prace.cz/nabidky/plzensky-kraj/plzen/?${q}`;
-  } else {
-    baseUrl = `https://www.prace.cz/nabidky/?${q}`;
-  }
-
-  const allJobs: ScrapedJob[] = [];
-
-  for (let page = 1; page <= maxPages; page++) {
-    // Add pagination param
-    const sep = baseUrl.includes("?") ? "&" : "?";
-    const url = page === 1 ? baseUrl : `${baseUrl}${sep}page=${page}`;
-
-    console.log(`[scraper] prace.cz → ${url}`);
-
-    const res = await safeFetch(url);
-    if (!res) break;
-
-    const html = await res.text();
-    const $ = cheerio.load(html);
-
-    let pageCount = 0;
-
-    // New markup (2026 redesign): <article id="advert-<uuid>" class="JobCard-module…">
-    // Field values sit next to an accessibility label span
-    // ("Lokalita:", "Název firmy:", "Typ úvazku:", "Plat:").
-    $('article[id^="advert-"]').each((_i, el) => {
-      const $el = $(el);
-
-      const $titleLink = $el.find('h2[data-testid="job-card-title"] a, a[data-testid="advert-link"]').first();
-      const title = $titleLink.text().trim();
-      let jobUrl = $titleLink.attr("href") ?? "";
-      if (jobUrl && !jobUrl.startsWith("http")) {
-        jobUrl = `https://www.prace.cz${jobUrl}`;
-      }
-
-      const jobId =
-        ($el.attr("id") ?? "").replace(/^advert-/, "") || `${Date.now()}-${_i}`;
-
-      // Collect label → value pairs from the card body
-      const fields: Record<string, string> = {};
-      $el.find("span.accessibility-hidden").each((_j, lab) => {
-        const label = $(lab).text().replace(/:\s*$/, "").trim();
-        const value = $(lab)
-          .next("span")
-          .clone()
-          .children()
-          .remove()
-          .end()
-          .text()
-          .replace(/ /g, " ")
-          .replace(/‍/g, "")
-          .replace(/\s+/g, " ")
-          .trim();
-        if (label && value) fields[label] = value;
-      });
-
-      const company = fields["Název firmy"] || "Neznáma firma";
-      const locationText = fields["Lokalita"] || location;
-      const salary = fields["Plat"] || undefined;
-      const employmentType = fields["Typ úvazku"] || "";
-
-      if (title) {
-        allJobs.push({
-          externalId: `pracecz-${jobId}`,
-          title,
-          company,
-          location: locationText,
-          description: employmentType ? `Typ: ${employmentType}` : "",
-          salary,
-          url: jobUrl,
-          portal: "prace.cz",
-        });
-        pageCount++;
-      }
-    });
-
-    if (pageCount === 0) break;
-  }
-
-  console.log(`[scraper] prace.cz found ${allJobs.length} results for "${query}" (${maxPages} pages)`);
-  return allJobs;
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +452,18 @@ export async function runWatcher(
   const searchCity = extractCityFromLocation(location);
   console.log(`[scraper] Location: "${location}" → search city: "${searchCity}"`);
 
+  // ── Country-aware portal selection ──
+  // Explicit cz/sk/both wins; "auto" (default) detects from the location string
+  const countrySetting = config.country ?? "auto";
+  const country: PortalCountry =
+    countrySetting === "cz" || countrySetting === "sk" || countrySetting === "both"
+      ? countrySetting
+      : await resolveCountry(location);
+  const activePortals = portalsForCountry(country);
+  console.log(
+    `[scraper] Country setting "${countrySetting}" → "${country}" → portals: ${activePortals.map((p) => p.id).join(", ")}`,
+  );
+
   // ── Load all active CVs and extract text for AI analysis ──
   const allCvRows = db.select().from(cvVersions).all().filter((cv: { isActive: boolean | null }) => cv.isActive !== false);
   const cvSummaries: CvSummary[] = [];
@@ -991,9 +497,9 @@ export async function runWatcher(
       console.log(`[scraper] Geocoded "${location}" → ${userCoords.lat}, ${userCoords.lng}`);
     } else {
       // Fallback to known city coordinates
-      const cityKey = searchCity.toLowerCase();
-      if (CITY_COORDS[cityKey]) {
-        userCoords = CITY_COORDS[cityKey];
+      const knownCity = findCity(searchCity);
+      if (knownCity) {
+        userCoords = knownCity.coords;
         console.log(`[scraper] Using known coords for "${searchCity}" → ${userCoords.lat}, ${userCoords.lng}`);
       }
     }
@@ -1026,7 +532,7 @@ export async function runWatcher(
   const allScraped: ScrapedJob[] = [];
 
   console.log(
-    `[scraper] Watcher #${watcherId}: scraping ${allCategories.length} categories × all terms × 3 portals`,
+    `[scraper] Watcher #${watcherId}: scraping ${allCategories.length} categories × all terms × ${activePortals.length} portals`,
   );
 
   // Helper to scrape a list of terms
@@ -1034,22 +540,16 @@ export async function runWatcher(
     for (const query of terms) {
       if (signal?.aborted) break;
 
-      const [jobsCz, startupJobs, praceCz] = await Promise.all([
-        scrapeJobsCz(query, searchCity).catch((err) => {
-          result.errors.push(`jobs.cz "${query}": ${err}`);
-          return [] as ScrapedJob[];
-        }),
-        scrapeStartupJobsCz(query, searchCity).catch((err) => {
-          result.errors.push(`startupjobs.cz "${query}": ${err}`);
-          return [] as ScrapedJob[];
-        }),
-        scrapePraceCz(query, searchCity).catch((err) => {
-          result.errors.push(`prace.cz "${query}": ${err}`);
-          return [] as ScrapedJob[];
-        }),
-      ]);
+      const batches = await Promise.all(
+        activePortals.map((portal) =>
+          portal.scrape(query, searchCity).catch((err) => {
+            result.errors.push(`${portal.id} "${query}": ${err}`);
+            return [] as ScrapedJob[];
+          }),
+        ),
+      );
 
-      for (const job of [...jobsCz, ...startupJobs, ...praceCz]) {
+      for (const job of batches.flat()) {
         if (!globalSeen.has(job.externalId)) {
           globalSeen.add(job.externalId);
           allScraped.push(job);

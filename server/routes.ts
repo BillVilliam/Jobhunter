@@ -4,6 +4,8 @@ import { storage } from "./storage.js";
 import { insertCvVersionSchema, insertCoverLetterSchema, insertJobListingSchema, insertWatcherConfigSchema, insertApplicationLogSchema, insertUserProfileSchema } from "@shared/schema.js";
 import { runWatcher, runAllActiveWatchers, type RunWatcherResult, type ScanProgressCallback } from "./scraper.js";
 import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
+import { resolveCountry } from "./locations.js";
+import { portalsForCountry } from "./portals/index.js";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -358,6 +360,30 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
     const job = await storage.updateJobListing(Number(req.params.id), updates);
     if (!job) return res.status(404).json({ error: "Job not found" });
     res.json(job);
+  });
+
+  // ==================== Portals (country-aware portal matching) ====================
+  // Returns which job portals will be scanned for a given location + country
+  // setting. country=auto detects CZ/SK from the location string.
+  app.get("/api/portals", async (req, res) => {
+    const location = String(req.query.location ?? "").trim();
+    const countryParam = String(req.query.country ?? "auto");
+
+    let country: "cz" | "sk" | "both";
+    let autoDetected = false;
+    if (countryParam === "cz" || countryParam === "sk" || countryParam === "both") {
+      country = countryParam;
+    } else {
+      country = location ? await resolveCountry(location) : "cz";
+      autoDetected = true;
+    }
+
+    const portals = portalsForCountry(country).map((p) => ({
+      id: p.id,
+      name: p.name,
+      country: p.country,
+    }));
+    res.json({ country, autoDetected, portals });
   });
 
   // ==================== Watcher Configs ====================

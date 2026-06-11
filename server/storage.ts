@@ -13,6 +13,18 @@ import { eq, desc, and, like, gte, ne, or, sql } from "drizzle-orm";
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
 
+// Lightweight in-place migration for existing databases (drizzle-kit push is
+// manual; this keeps old data.db files working after the column was added)
+try {
+  const cols = sqlite.prepare(`PRAGMA table_info(watcher_configs)`).all() as { name: string }[];
+  if (cols.length > 0 && !cols.some((c) => c.name === "country")) {
+    sqlite.exec(`ALTER TABLE watcher_configs ADD COLUMN country TEXT DEFAULT 'auto'`);
+    console.log("[storage] Migrated watcher_configs: added country column");
+  }
+} catch (err) {
+  console.warn("[storage] country column migration skipped:", err);
+}
+
 export const db = drizzle(sqlite);
 
 export interface IStorage {
