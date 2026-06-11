@@ -58,6 +58,11 @@ export default function Dashboard() {
   // and without a location (to detect it from) cannot scan — the user must
   // pick 🇨🇿 or 🇸🇰 first, otherwise the scan is refused.
   const [showCountryDialog, setShowCountryDialog] = useState(false);
+
+  // Credit balance — AI actions (scan, CV analysis, cover letters) spend credits
+  const { data: credits } = useQuery<{ balance: number; tokensPerCredit: number }>({
+    queryKey: ["/api/credits"],
+  });
   const { data: allWatchers = [] } = useQuery<WatcherConfig[]>({
     queryKey: ["/api/watchers"],
   });
@@ -408,6 +413,18 @@ export default function Dashboard() {
         <span>{data?.cvCount ?? 0} CV</span>
         <span>·</span>
         <span>{data?.activeWatchers ?? 0} watcherov</span>
+        {credits && (
+          <>
+            <span>·</span>
+            <span
+              className={credits.balance <= 0 ? "text-red-500 font-semibold" : ""}
+              title={`1 kredit = ${credits.tokensPerCredit.toLocaleString()} AI tokenov (pomer sa dá zmeniť v nastaveniach)`}
+              data-testid="credit-balance"
+            >
+              💳 {credits.balance.toFixed(1)} kreditov
+            </span>
+          </>
+        )}
       </div>
 
       {/* ─── Recent jobs ─── */}

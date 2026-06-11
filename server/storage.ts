@@ -25,6 +25,24 @@ try {
   console.warn("[storage] country column migration skipped:", err);
 }
 
+// Credit system tables (new — created in place for existing databases)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS credit_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER DEFAULT 1,
+    action TEXT NOT NULL,
+    tokens_used INTEGER DEFAULT 0,
+    credits_delta REAL NOT NULL,
+    details TEXT,
+    timestamp TEXT NOT NULL
+  );
+`);
+
 export const db = drizzle(sqlite);
 
 export interface IStorage {

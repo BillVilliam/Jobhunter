@@ -83,6 +83,25 @@ export const watcherConfigs = sqliteTable("watcher_configs", {
   createdAt: text("created_at").notNull(),
 });
 
+// App-wide settings (key/value) — e.g. credit system configuration
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+// Credit ledger — every AI usage (and top-up) is one row.
+// Balance = sum of creditsDelta. Negative = spent, positive = granted.
+export const creditLedger = sqliteTable("credit_ledger", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").default(1), // ready for multi-user accounts later
+  action: text("action").notNull(), // job-analysis, cv-analysis, cover-letter, vision-ocr, starter-grant, topup
+  tokensUsed: integer("tokens_used").default(0), // raw AI API tokens consumed
+  creditsDelta: real("credits_delta").notNull(),
+  details: text("details"),
+  timestamp: text("timestamp").notNull(),
+});
+
 // Application history / log
 export const applicationLogs = sqliteTable("application_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

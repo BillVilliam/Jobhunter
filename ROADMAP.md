@@ -30,11 +30,21 @@
       goes public — currently the API is open.
 
 ## Credit system (monetization-ready, not the main goal yet)
-- [ ] Credits per AI action (scan run, CV analysis, cover letter generation)
-      since AI calls cost real money per use.
-- [ ] Free starter credits for new accounts; manual top-up by admin first,
-      payment provider (Stripe) only if/when needed.
-- [ ] Credit ledger table: userId, action, creditsDelta, timestamp.
+- [x] **Core implemented**: every AI call (job analysis, CV analysis, cover
+      letter, vision OCR) records its API token usage and deducts credits.
+      Conversion ratio "tokens per 1 credit" is a runtime setting
+      (`PATCH /api/credits/settings`) — **the exact number is a placeholder
+      (10 000) and still needs to be decided/tuned**.
+- [x] Free starter credits (100) for a fresh installation; manual top-up via
+      `POST /api/credits/topup`; balance + ledger via `GET /api/credits`;
+      no credits → scan and AI actions are refused (HTTP 402).
+- [x] Credit ledger table: userId (ready for accounts), action, tokensUsed,
+      creditsDelta, timestamp.
+- [ ] Decide the real tokens-per-credit ratio + starter amount (pricing).
+- [ ] Per-user balances once accounts/auth land; payment provider (Stripe)
+      only if/when needed.
+- [ ] UI for top-up + ledger history (now only the balance shows on the
+      dashboard).
 
 ## Creator/admin dashboard
 - [ ] Usage analytics: number of users, active users, scans run, jobs found,

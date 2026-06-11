@@ -6,6 +6,7 @@ import { runWatcher, runAllActiveWatchers, type RunWatcherResult, type ScanProgr
 import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
 import { resolveCountry } from "./locations.js";
 import { portalsForCountry } from "./portals/index.js";
+import { recordAiUsage, hasCredits, getCreditBalance, getCreditSummary, setTokensPerCredit, addCredits } from "./credits.js";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -70,6 +71,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: "CV nemá nahraný súbor" });
       }
 
+      if (!hasCredits()) {
+        return res.status(402).json({ error: `Nedostatok kreditov (zostatok: ${getCreditBalance()})` });
+      }
+
       const imageUrl = cv.fileContent.startsWith("data:")
         ? cv.fileContent
         : `data:image/png;base64,${cv.fileContent}`;
@@ -95,6 +100,7 @@ export async function registerRoutes(
           },
         ],
       });
+      recordAiUsage("vision-ocr", ocrResponse.usage?.total_tokens ?? 0, `CV analyze: ${cv.name}`);
       const cvText = (ocrResponse.choices[0]?.message?.content || "").trim();
       if (!cvText) {
         return res.status(500).json({ error: "Z obrázka CV sa nepodarilo vytiahnuť text" });
@@ -138,6 +144,7 @@ For suggestedSearchTerms: provide 10-15 concrete job search keywords in Czech/Sl
         ],
       });
 
+      recordAiUsage("cv-analysis", response.usage?.total_tokens ?? 0, cv.name);
       const analysisText = response.choices[0]?.message?.content || "{}";
       let analysis: Record<string, unknown>;
       try {
@@ -202,6 +209,10 @@ For suggestedSearchTerms: provide 10-15 concrete job search keywords in Czech/Sl
       if (!cv) return res.status(404).json({ error: "CV not found" });
       const job = await storage.getJobListing(jobId);
       if (!job) return res.status(404).json({ error: "Job not found" });
+
+      if (!hasCredits()) {
+        return res.status(402).json({ error: `Nedostatok kreditov (zostatok: ${getCreditBalance()})` });
+      }
 
       // Parse CV analysis for rich context
       let cvContext = "";
@@ -271,6 +282,7 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
         ],
       });
 
+      recordAiUsage("cover-letter", response.usage?.total_tokens ?? 0, `${job.title} @ ${job.company}`);
       const generatedText = response.choices[0]?.message?.content || "";
       res.json({
         content: generatedText,
@@ -360,6 +372,35 @@ Please write the cover letter in ${langName}, ${lengthInstruction}.`
     const job = await storage.updateJobListing(Number(req.params.id), updates);
     if (!job) return res.status(404).json({ error: "Job not found" });
     res.json(job);
+  });
+
+  // ==================== Credits ====================
+  // Users spend credits on AI actions. One credit buys `tokensPerCredit` API
+  // tokens — the exact ratio is a runtime setting, not decided yet, change it
+  // anytime via PATCH /api/credits/settings.
+  app.get("/api/credits", (_req, res) => {
+    res.json(getCreditSummary());
+  });
+
+  app.patch("/api/credits/settings", (req, res) => {
+    const tokensPerCredit = Number(req.body?.tokensPerCredit);
+    try {
+      setTokensPerCredit(tokensPerCredit);
+      res.json({ tokensPerCredit });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/credits/topup", (req, res) => {
+    const amount = Number(req.body?.amount);
+    const details = typeof req.body?.details === "string" ? req.body.details : undefined;
+    try {
+      addCredits(amount, details);
+      res.json({ balance: getCreditBalance() });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   // ==================== Portals (country-aware portal matching) ====================

@@ -31,6 +31,7 @@ import {
   type GeoCoords,
 } from "./locations.js";
 import { portalsForCountry, type ScrapedJob, type PortalCountry } from "./portals/index.js";
+import { recordAiUsage, hasCredits, getCreditBalance } from "./credits.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,6 +122,7 @@ async function extractTextFromImage(base64DataUrl: string): Promise<string> {
       ],
     });
 
+    recordAiUsage("vision-ocr", response.usage?.total_tokens ?? 0, "CV text extraction");
     return (response.choices[0]?.message?.content || "").trim().slice(0, 4000);
   } catch (err) {
     console.error("[scraper] Image text extraction failed:", err);
@@ -255,6 +257,8 @@ Respond with JSON matching this TypeScript interface:
         max_tokens: 4000,
         response_format: { type: "json_object" },
       });
+
+      recordAiUsage("job-analysis", completion.usage?.total_tokens ?? 0, job.title);
 
       const raw = completion.choices[0]?.message?.content ?? "{}";
       const parsed = JSON.parse(raw) as Partial<AiAnalysis>;
@@ -421,6 +425,14 @@ export async function runWatcher(
     .get();
   if (!config) {
     result.errors.push(`Watcher ${watcherId} not found`);
+    return result;
+  }
+
+  // ── Credit gate — AI analysis costs credits, no credits = no scan ──
+  if (!hasCredits()) {
+    result.errors.push(
+      `Nedostatok kreditov (zostatok: ${getCreditBalance()}) — dobi kredity, inak nie je možné skenovať`,
+    );
     return result;
   }
 
