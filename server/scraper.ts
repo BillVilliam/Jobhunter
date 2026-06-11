@@ -11,11 +11,11 @@
  *   4. Category relevance
  *
  * Supported portals:  jobs.cz (HTML)  |  startupjobs.cz (JSON API)  |  prace.cz (HTML)
- * AI model:           gpt-4.1-mini (OpenAI)
+ * AI model:           deepseek-v4-pro (DeepSeek) — vision/OCR via gpt-4.1-mini (OpenAI)
  */
 
-import OpenAI from "openai";
 import * as cheerio from "cheerio";
+import { getDeepSeek, getVisionAI, DEEPSEEK_MODEL, VISION_MODEL } from "./ai.js";
 import { db } from "./storage.js";
 import { jobListings, watcherConfigs, cvVersions } from "@shared/schema.js";
 import { eq } from "drizzle-orm";
@@ -119,21 +119,40 @@ async function safeFetch(
 }
 
 // ---------------------------------------------------------------------------
-// PDF text extraction (for CV analysis)
+// Image-based CV text extraction (OpenAI Vision)
 // ---------------------------------------------------------------------------
 
-async function extractTextFromPdf(base64DataUrl: string): Promise<string> {
+async function extractTextFromImage(base64DataUrl: string): Promise<string> {
   try {
-    // Strip data:application/pdf;base64, prefix
-    const base64 = base64DataUrl.replace(/^data:[^;]+;base64,/, "");
-    const buffer = Buffer.from(base64, "base64");
-    // pdf-parse v2 uses a class-based API: pass data in constructor options
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: new Uint8Array(buffer) });
-    const result = await parser.getText();
-    return (result.text || "").replace(/\s+/g, " ").trim().slice(0, 4000);
+    const openai = await getVisionAI();
+    // Ensure it has the data URL prefix
+    const imageUrl = base64DataUrl.startsWith("data:")
+      ? base64DataUrl
+      : `data:image/png;base64,${base64DataUrl}`;
+
+    const response = await openai.chat.completions.create({
+      model: VISION_MODEL,
+      max_tokens: 4000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extract ALL text content from this CV/resume image. Return the raw text only, no formatting or commentary. Include all sections: personal info, skills, experience, education, etc.",
+            },
+            {
+              type: "image_url",
+              image_url: { url: imageUrl, detail: "high" },
+            },
+          ],
+        },
+      ],
+    });
+
+    return (response.choices[0]?.message?.content || "").trim().slice(0, 4000);
   } catch (err) {
-    console.error("[scraper] PDF text extraction failed:", err);
+    console.error("[scraper] Image text extraction failed:", err);
     return "";
   }
 }
@@ -511,28 +530,30 @@ async function scrapeStartupJobsCz(
 // prace.cz – HTML scraping
 // ---------------------------------------------------------------------------
 
-async function scrapePraceCz(
+export async function scrapePraceCz(
   query: string,
   location: string = "Praha",
   maxPages: number = 2,
 ): Promise<ScrapedJob[]> {
-  const keyword = encodeURIComponent(query.replace(/\s+/g, "-"));
+  // prace.cz redesign (2026): keyword-in-path slugs are ignored; the search
+  // now uses a `q[]=` query param (same format as jobs.cz — both run on LMC).
+  const q = `q%5B%5D=${encodeURIComponent(query)}`;
   const locLower = location.toLowerCase().trim();
 
-  // Build base URL
+  // Build base URL — locality path slugs still work, keyword goes into ?q[]=
   let baseUrl: string;
   if (!locLower || locLower === "all") {
-    baseUrl = `https://www.prace.cz/nabidky/?keyword=${encodeURIComponent(query)}`;
+    baseUrl = `https://www.prace.cz/nabidky/?${q}`;
   } else if (locLower === "praha" || locLower === "prague") {
-    baseUrl = `https://www.prace.cz/nabidky/hlavni-mesto-praha/praha/${keyword}/`;
+    baseUrl = `https://www.prace.cz/nabidky/hlavni-mesto-praha/praha/?${q}`;
   } else if (locLower === "brno") {
-    baseUrl = `https://www.prace.cz/nabidky/jihomoravsky-kraj/brno/${keyword}/`;
+    baseUrl = `https://www.prace.cz/nabidky/jihomoravsky-kraj/brno/?${q}`;
   } else if (locLower === "ostrava") {
-    baseUrl = `https://www.prace.cz/nabidky/moravskoslezsky-kraj/ostrava/${keyword}/`;
+    baseUrl = `https://www.prace.cz/nabidky/moravskoslezsky-kraj/ostrava/?${q}`;
   } else if (locLower === "plzeň" || locLower === "plzen") {
-    baseUrl = `https://www.prace.cz/nabidky/plzensky-kraj/plzen/${keyword}/`;
+    baseUrl = `https://www.prace.cz/nabidky/plzensky-kraj/plzen/?${q}`;
   } else {
-    baseUrl = `https://www.prace.cz/nabidky/?keyword=${encodeURIComponent(query)}&locality=${encodeURIComponent(location)}`;
+    baseUrl = `https://www.prace.cz/nabidky/?${q}`;
   }
 
   const allJobs: ScrapedJob[] = [];
@@ -552,32 +573,44 @@ async function scrapePraceCz(
 
     let pageCount = 0;
 
-    $("li.search-result__advert").each((_i, el) => {
+    // New markup (2026 redesign): <article id="advert-<uuid>" class="JobCard-module…">
+    // Field values sit next to an accessibility label span
+    // ("Lokalita:", "Název firmy:", "Typ úvazku:", "Plat:").
+    $('article[id^="advert-"]').each((_i, el) => {
       const $el = $(el);
 
-      const $titleLink = $el.find("h3 a.link");
-      const title = $titleLink.find("strong").text().trim() || $titleLink.text().trim();
+      const $titleLink = $el.find('h2[data-testid="job-card-title"] a, a[data-testid="advert-link"]').first();
+      const title = $titleLink.text().trim();
       let jobUrl = $titleLink.attr("href") ?? "";
       if (jobUrl && !jobUrl.startsWith("http")) {
         jobUrl = `https://www.prace.cz${jobUrl}`;
       }
 
       const jobId =
-        $titleLink.attr("data-jd") ??
-        $titleLink.attr("id") ??
-        `${Date.now()}-${_i}`;
+        ($el.attr("id") ?? "").replace(/^advert-/, "") || `${Date.now()}-${_i}`;
 
-      const company =
-        $el.find(".search-result__advert__box__item--company").clone().children().remove().end().text().trim() || "Neznáma firma";
+      // Collect label → value pairs from the card body
+      const fields: Record<string, string> = {};
+      $el.find("span.accessibility-hidden").each((_j, lab) => {
+        const label = $(lab).text().replace(/:\s*$/, "").trim();
+        const value = $(lab)
+          .next("span")
+          .clone()
+          .children()
+          .remove()
+          .end()
+          .text()
+          .replace(/ /g, " ")
+          .replace(/‍/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (label && value) fields[label] = value;
+      });
 
-      const locationText =
-        $el.find(".search-result__advert__box__item--location strong").text().trim() || location;
-
-      const salary =
-        $el.find(".search-result__advert__box__item--salary").text().replace(/\u00A0/g, " ").replace(/\u200D/g, "").replace(/\s+/g, " ").trim() || undefined;
-
-      const employmentType =
-        $el.find(".search-result__advert__box__item--employment-type").clone().children().remove().end().text().trim() || "";
+      const company = fields["Název firmy"] || "Neznáma firma";
+      const locationText = fields["Lokalita"] || location;
+      const salary = fields["Plat"] || undefined;
+      const employmentType = fields["Typ úvazku"] || "";
 
       if (title) {
         allJobs.push({
@@ -602,20 +635,8 @@ async function scrapePraceCz(
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI client (lazy)
+// AI clients — DeepSeek V4 Pro for reasoning, OpenAI only for vision (see ai.ts)
 // ---------------------------------------------------------------------------
-
-let _openai: OpenAI | null = null;
-
-function getOpenAI(): OpenAI {
-  if (!_openai) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey)
-      throw new Error("OPENAI_API_KEY environment variable is not set");
-    _openai = new OpenAI({ apiKey });
-  }
-  return _openai;
-}
 
 // ---------------------------------------------------------------------------
 // AI analysis engine — enhanced with CV matching, distance, work mode
@@ -636,7 +657,7 @@ export async function analyseJobWithAI(
   cvSummaries?: CvSummary[],
   distanceKm?: number | null,
 ): Promise<AiAnalysis> {
-  const openai = getOpenAI();
+  const openai = await getDeepSeek();
 
   const categoryDescriptions = categories
     .map((c) => CATEGORY_LABELS[c as JobCategory] ?? customLabelMap?.[c] ?? c)
@@ -730,13 +751,14 @@ Respond with JSON matching this TypeScript interface:
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const completion = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
+        model: DEEPSEEK_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
         temperature: 0.2,
-        max_tokens: 800,
+        // reasoning model: budget must cover internal reasoning + the JSON answer
+        max_tokens: 4000,
         response_format: { type: "json_object" },
       });
 
@@ -767,11 +789,11 @@ Respond with JSON matching this TypeScript interface:
       if (err?.status === 429 && attempt < MAX_RETRIES) {
         const retryAfterMs = parseInt(err?.headers?.get?.("retry-after-ms") ?? "0", 10) || (attempt * 2000);
         const waitMs = Math.max(retryAfterMs, attempt * 1500);
-        console.log(`[scraper] OpenAI rate-limited, retrying in ${waitMs}ms (attempt ${attempt}/${MAX_RETRIES})`);
+        console.log(`[scraper] DeepSeek rate-limited, retrying in ${waitMs}ms (attempt ${attempt}/${MAX_RETRIES})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
-      console.error(`[scraper] OpenAI analysis failed (attempt ${attempt}):`, err?.message ?? err);
+      console.error(`[scraper] DeepSeek analysis failed (attempt ${attempt}):`, err?.message ?? err);
       return {
         score: 0,
         reason: "AI analýza zlyhala",
@@ -941,8 +963,11 @@ export async function runWatcher(
   const cvSummaries: CvSummary[] = [];
   for (const cv of allCvRows) {
     let textSnippet = "";
-    if (cv.fileContent && cv.fileType === "pdf") {
-      textSnippet = await extractTextFromPdf(cv.fileContent);
+    // Use already-parsed text (from CV analysis) if available, otherwise extract via Vision
+    if (cv.parsedText) {
+      textSnippet = cv.parsedText;
+    } else if (cv.fileContent) {
+      textSnippet = await extractTextFromImage(cv.fileContent);
     }
     let skills: string[] = [];
     try { skills = JSON.parse(cv.skills || "[]"); } catch {}
@@ -1094,7 +1119,9 @@ export async function runWatcher(
   console.log(`[scraper] Using fast city-based distance estimation (user city: "${searchCity}")`);
 
   if (!signal?.aborted) {
-    await parallelMap(needsAI, 5, async (job) => {
+    // DeepSeek reasoning is slower per call than gpt-4.1-mini was — compensate
+    // with higher parallelism (DeepSeek has no hard RPM limit).
+    await parallelMap(needsAI, 12, async (job) => {
       if (signal?.aborted) {
         analyzed++;
         onProgress?.({ phase: "analyzing", found: result.found, newJobs: newJobCount, analyzed, total: needsAI.length, saved: result.saved });

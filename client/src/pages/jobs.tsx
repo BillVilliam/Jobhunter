@@ -127,7 +127,7 @@ export default function Jobs() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold" data-testid="page-title">Pracovné ponuky</h1>
+        <h1 className="text-[26px] font-semibold tracking-tight" data-testid="page-title">Pracovné ponuky</h1>
         <p className="text-sm text-muted-foreground mt-1">Všetky nájdené pracovné ponuky</p>
       </div>
 

@@ -11,7 +11,6 @@ import Dashboard from "@/pages/dashboard";
 import Jobs from "@/pages/jobs";
 import CvManager from "@/pages/cv-manager";
 import Watchers from "@/pages/watchers";
-import Profile from "@/pages/profile";
 
 function AppRouter() {
   return (
@@ -21,7 +20,6 @@ function AppRouter() {
         <Route path="/jobs" component={Jobs} />
         <Route path="/cv" component={CvManager} />
         <Route path="/watchers" component={Watchers} />
-        <Route path="/profile" component={Profile} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

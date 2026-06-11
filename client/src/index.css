@@ -2,51 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-/* LIGHT MODE - Professional dark blue/teal theme for job hunting */
+/* LIGHT MODE — "Quiet editorial": warm ivory paper, ink text, hunter-green accent */
 :root {
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);
   --opaque-button-border-intensity: -8;
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
-  --background: 210 20% 98%;
-  --foreground: 215 25% 12%;
-  --border: 210 12% 89%;
-  --card: 210 15% 97%;
-  --card-foreground: 215 25% 12%;
-  --card-border: 210 10% 92%;
-  --sidebar: 215 20% 95%;
-  --sidebar-foreground: 215 25% 12%;
-  --sidebar-border: 210 12% 90%;
-  --sidebar-primary: 199 89% 32%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 210 12% 89%;
-  --sidebar-accent-foreground: 215 25% 12%;
-  --sidebar-ring: 199 89% 32%;
-  --popover: 210 15% 96%;
-  --popover-foreground: 215 25% 12%;
-  --popover-border: 210 12% 89%;
-  --primary: 199 89% 32%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 210 12% 92%;
-  --secondary-foreground: 215 25% 12%;
-  --muted: 210 10% 93%;
-  --muted-foreground: 215 10% 44%;
-  --accent: 199 20% 92%;
-  --accent-foreground: 215 25% 12%;
-  --destructive: 0 72% 51%;
+  --background: 42 36% 97%;
+  --foreground: 30 12% 13%;
+  --border: 38 16% 87%;
+  --card: 40 40% 99%;
+  --card-foreground: 30 12% 13%;
+  --card-border: 38 16% 89%;
+  --sidebar: 42 30% 95%;
+  --sidebar-foreground: 30 12% 13%;
+  --sidebar-border: 38 16% 88%;
+  --sidebar-primary: 161 44% 22%;
+  --sidebar-primary-foreground: 42 40% 97%;
+  --sidebar-accent: 160 22% 90%;
+  --sidebar-accent-foreground: 161 44% 16%;
+  --sidebar-ring: 161 44% 28%;
+  --popover: 40 40% 99%;
+  --popover-foreground: 30 12% 13%;
+  --popover-border: 38 16% 87%;
+  --primary: 161 44% 22%;
+  --primary-foreground: 42 40% 97%;
+  --secondary: 40 20% 92%;
+  --secondary-foreground: 30 12% 13%;
+  --muted: 40 18% 92%;
+  --muted-foreground: 30 7% 42%;
+  --accent: 160 24% 91%;
+  --accent-foreground: 161 44% 16%;
+  --destructive: 8 68% 47%;
   --destructive-foreground: 0 0% 100%;
-  --input: 210 10% 78%;
-  --ring: 199 89% 32%;
-  --chart-1: 199 89% 32%;
-  --chart-2: 162 63% 41%;
-  --chart-3: 270 50% 50%;
-  --chart-4: 38 92% 50%;
-  --chart-5: 12 76% 61%;
-  --font-sans: 'General Sans', 'Inter', sans-serif;
-  --font-serif: Georgia, serif;
+  --input: 38 14% 78%;
+  --ring: 161 44% 28%;
+  --chart-1: 161 44% 30%;
+  --chart-2: 38 90% 48%;
+  --chart-3: 30 12% 25%;
+  --chart-4: 199 60% 40%;
+  --chart-5: 8 68% 55%;
+  --font-sans: 'Schibsted Grotesk', 'Helvetica Neue', sans-serif;
+  --font-serif: 'Fraunces', Georgia, serif;
   --font-mono: 'JetBrains Mono', monospace;
-  --radius: .5rem;
+  --radius: .65rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
@@ -80,40 +80,40 @@
   --opaque-button-border-intensity: 9;
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
-  --background: 215 25% 8%;
-  --foreground: 210 15% 93%;
-  --border: 215 15% 18%;
-  --card: 215 20% 10%;
-  --card-foreground: 210 15% 93%;
-  --card-border: 215 15% 15%;
-  --sidebar: 215 22% 11%;
-  --sidebar-foreground: 210 15% 93%;
-  --sidebar-border: 215 15% 16%;
-  --sidebar-primary: 199 75% 45%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 215 15% 18%;
-  --sidebar-accent-foreground: 210 15% 93%;
-  --sidebar-ring: 199 75% 45%;
-  --popover: 215 20% 12%;
-  --popover-foreground: 210 15% 93%;
-  --popover-border: 215 15% 18%;
-  --primary: 199 75% 45%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 215 15% 18%;
-  --secondary-foreground: 210 15% 93%;
-  --muted: 215 12% 20%;
-  --muted-foreground: 210 10% 60%;
-  --accent: 199 15% 18%;
-  --accent-foreground: 210 15% 93%;
-  --destructive: 0 72% 51%;
+  --background: 30 10% 8%;
+  --foreground: 40 22% 91%;
+  --border: 30 8% 18%;
+  --card: 30 9% 11%;
+  --card-foreground: 40 22% 91%;
+  --card-border: 30 8% 16%;
+  --sidebar: 30 10% 9%;
+  --sidebar-foreground: 40 22% 91%;
+  --sidebar-border: 30 8% 16%;
+  --sidebar-primary: 158 36% 50%;
+  --sidebar-primary-foreground: 160 40% 8%;
+  --sidebar-accent: 160 14% 16%;
+  --sidebar-accent-foreground: 158 30% 75%;
+  --sidebar-ring: 158 36% 50%;
+  --popover: 30 9% 12%;
+  --popover-foreground: 40 22% 91%;
+  --popover-border: 30 8% 18%;
+  --primary: 158 36% 50%;
+  --primary-foreground: 160 40% 8%;
+  --secondary: 30 8% 17%;
+  --secondary-foreground: 40 22% 91%;
+  --muted: 30 7% 18%;
+  --muted-foreground: 35 8% 60%;
+  --accent: 160 12% 17%;
+  --accent-foreground: 158 30% 78%;
+  --destructive: 8 68% 52%;
   --destructive-foreground: 0 0% 100%;
-  --input: 215 12% 28%;
-  --ring: 199 75% 45%;
-  --chart-1: 199 75% 55%;
-  --chart-2: 162 55% 52%;
-  --chart-3: 270 50% 62%;
-  --chart-4: 38 88% 60%;
-  --chart-5: 12 76% 65%;
+  --input: 30 8% 26%;
+  --ring: 158 36% 50%;
+  --chart-1: 158 40% 55%;
+  --chart-2: 38 88% 58%;
+  --chart-3: 40 22% 80%;
+  --chart-4: 199 60% 55%;
+  --chart-5: 8 68% 60%;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
@@ -146,7 +146,65 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    /* faint top wash — gives the ivory paper a hint of depth */
+    background-image: radial-gradient(
+      1100px 480px at 72% -12%,
+      hsl(var(--accent) / 0.55),
+      transparent 62%
+    );
+    background-repeat: no-repeat;
   }
+
+  /* Editorial page titles — Fraunces with tight tracking */
+  h1, h2 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    font-variation-settings: "opsz" 40;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 6px;
+    border: 2px solid hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.4); }
+}
+
+/* ── Page-load reveal: stagger children of .stagger-in ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-in > * {
+  opacity: 0;
+  animation: fadeUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.stagger-in > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger-in > *:nth-child(2) { animation-delay: 0.09s; }
+.stagger-in > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-in > *:nth-child(4) { animation-delay: 0.21s; }
+.stagger-in > *:nth-child(5) { animation-delay: 0.27s; }
+.stagger-in > *:nth-child(6) { animation-delay: 0.33s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-in > * { animation: none; opacity: 1; }
+}
+
+/* Serif display numerals (dashboard stats) */
+.stat-numeral {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-variation-settings: "opsz" 60;
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums;
 }
 
 @layer utilities {

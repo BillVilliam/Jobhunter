@@ -4,10 +4,8 @@ import {
   FileText,
   Briefcase,
   Eye,
-  User,
   Moon,
   Sun,
-  Target,
 } from "lucide-react";
 import { useTheme } from "./theme-provider";
 import { Button } from "@/components/ui/button";
@@ -17,7 +15,6 @@ const navItems = [
   { path: "/jobs", label: "Ponuky", icon: Briefcase },
   { path: "/cv", label: "CV Databáza", icon: FileText },
   { path: "/watchers", label: "Watchery", icon: Eye },
-  { path: "/profile", label: "Profil", icon: User },
 ];
 
 export function AppSidebar() {
@@ -25,31 +22,52 @@ export function AppSidebar() {
   const { theme, toggleTheme } = useTheme();
 
   return (
-    <aside className="flex flex-col w-64 min-h-screen bg-sidebar border-r border-sidebar-border" data-testid="app-sidebar">
-      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-sidebar-border">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary">
-          <Target className="w-4.5 h-4.5 text-primary-foreground" />
-        </div>
-        <span className="text-base font-semibold tracking-tight text-sidebar-foreground" data-testid="app-title">
-          JobHunter
-        </span>
+    <aside
+      className="flex flex-col w-60 min-h-screen bg-sidebar border-r border-sidebar-border"
+      data-testid="app-sidebar"
+    >
+      {/* Wordmark */}
+      <div className="px-6 pt-7 pb-6">
+        <Link href="/">
+          <div className="cursor-pointer select-none" data-testid="app-title">
+            <span className="font-serif text-[22px] font-semibold tracking-tight text-sidebar-foreground leading-none">
+              Job<span className="italic text-primary">Hunter</span>
+            </span>
+            <p className="mt-1.5 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              AI Job Scout
+            </p>
+          </div>
+        </Link>
       </div>
 
-      <nav className="flex-1 px-3 py-4 space-y-1" data-testid="sidebar-nav">
+      <nav className="flex-1 px-3 space-y-0.5" data-testid="sidebar-nav">
         {navItems.map((item) => {
-          const isActive = item.path === "/" ? location === "/" : location === item.path || location.startsWith(item.path + "/");
+          const isActive =
+            item.path === "/"
+              ? location === "/"
+              : location === item.path || location.startsWith(item.path + "/");
           const Icon = item.icon;
           return (
             <Link key={item.path} href={item.path}>
               <div
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                className={`group relative flex items-center gap-3 px-3 py-2 rounded-md text-[13.5px] transition-all duration-150 cursor-pointer ${
                   isActive
-                    ? "bg-sidebar-accent text-sidebar-foreground"
-                    : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
+                    : "text-muted-foreground font-medium hover:text-sidebar-foreground hover:bg-sidebar-accent/40"
                 }`}
                 data-testid={`nav-${item.label.toLowerCase()}`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
+                {/* Active indicator — small ink dot */}
+                <span
+                  className={`absolute left-0 top-1/2 -translate-y-1/2 w-[3px] rounded-full bg-primary transition-all duration-200 ${
+                    isActive ? "h-4 opacity-100" : "h-0 opacity-0"
+                  }`}
+                />
+                <Icon
+                  className={`w-4 h-4 shrink-0 transition-colors ${
+                    isActive ? "text-primary" : "text-muted-foreground/70 group-hover:text-sidebar-foreground"
+                  }`}
+                />
                 {item.label}
               </div>
             </Link>

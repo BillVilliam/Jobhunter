@@ -8,10 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { Eye, Plus, Trash2, Play, Pause, MapPin, Zap, Loader2, Laptop, Briefcase, Settings, X, PencilLine, Navigation } from "lucide-react";
+import { Eye, Plus, Trash2, Play, Pause, MapPin, Zap, Loader2, Laptop, Briefcase, Settings, X, PencilLine, Navigation, Sparkles } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { WatcherConfig } from "@shared/schema";
+import type { WatcherConfig, CvVersion } from "@shared/schema";
 
 // Category stored in jobCategories JSON array
 export interface Category {
@@ -154,6 +154,15 @@ export default function Watchers() {
 
   const { data: watchers = [], isLoading } = useQuery<WatcherConfig[]>({
     queryKey: ["/api/watchers"],
+  });
+
+  const { data: cvVersions = [] } = useQuery<CvVersion[]>({
+    queryKey: ["/api/cv-versions"],
+  });
+
+  // Get CVs that have analysis
+  const analyzedCvs = cvVersions.filter((cv) => {
+    try { return !!JSON.parse((cv as any).cvAnalysis || "null"); } catch { return false; }
   });
 
   const createMutation = useMutation({
@@ -521,7 +530,7 @@ export default function Watchers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold" data-testid="page-title">Watchery</h1>
+          <h1 className="text-[26px] font-semibold tracking-tight" data-testid="page-title">Watchery</h1>
           <p className="text-sm text-muted-foreground mt-1">Nastav čo hľadáš a SCAN nájde ponuky</p>
         </div>
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
@@ -616,6 +625,28 @@ export default function Watchers() {
                 <p className="text-[10px] text-muted-foreground -mt-1">
                   Vyber kategórie – SCAN prehľadá všetky portály a AI vyberie najlepšie ponuky.
                 </p>
+                {/* Load from CV */}
+                {analyzedCvs.length > 0 && (
+                  <div className="flex items-center gap-2 p-2 rounded-md border border-dashed border-violet-300 bg-violet-50 dark:bg-violet-900/10">
+                    <Sparkles className="w-4 h-4 text-violet-500 shrink-0" />
+                    <Select onValueChange={(cvId) => {
+                      const cv = analyzedCvs.find(c => c.id === Number(cvId));
+                      if (!cv) return;
+                      try {
+                        const analysis = JSON.parse((cv as any).cvAnalysis || "{}");
+                        if (analysis.suggestedCategories?.length) {
+                          setSelectedCategories(analysis.suggestedCategories);
+                          toast({ title: "Kategórie načítané z CV ✓", description: `${analysis.suggestedCategories.length} kategórií z "${cv.name}"` });
+                        }
+                      } catch {}
+                    }}>
+                      <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Načítať kategórie z CV..." /></SelectTrigger>
+                      <SelectContent>
+                        {analyzedCvs.map(cv => <SelectItem key={cv.id} value={String(cv.id)}>{cv.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <CategoryList
                   categories={selectedCategories}
                   setCategories={setSelectedCategories}
@@ -862,6 +893,27 @@ export default function Watchers() {
                 <p className="text-[10px] text-muted-foreground -mt-1">
                   Vyber kategórie – SCAN prehľadá všetky portály a AI vyberie najlepšie ponuky.
                 </p>
+                {analyzedCvs.length > 0 && (
+                  <div className="flex items-center gap-2 p-2 rounded-md border border-dashed border-violet-300 bg-violet-50 dark:bg-violet-900/10">
+                    <Sparkles className="w-4 h-4 text-violet-500 shrink-0" />
+                    <Select onValueChange={(cvId) => {
+                      const cv = analyzedCvs.find(c => c.id === Number(cvId));
+                      if (!cv) return;
+                      try {
+                        const analysis = JSON.parse((cv as any).cvAnalysis || "{}");
+                        if (analysis.suggestedCategories?.length) {
+                          setEditCategories(analysis.suggestedCategories);
+                          toast({ title: "Kategórie načítané z CV ✓", description: `${analysis.suggestedCategories.length} kategórií z "${cv.name}"` });
+                        }
+                      } catch {}
+                    }}>
+                      <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Načítať kategórie z CV..." /></SelectTrigger>
+                      <SelectContent>
+                        {analyzedCvs.map(cv => <SelectItem key={cv.id} value={String(cv.id)}>{cv.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <CategoryList
                   categories={editCategories}
                   setCategories={setEditCategories}

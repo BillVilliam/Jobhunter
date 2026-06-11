@@ -86,7 +86,7 @@ export default function Dashboard() {
   const hasWatchers = (data?.totalWatchers ?? 0) > 0;
 
   return (
-    <div className="space-y-6 relative">
+    <div className="space-y-6 relative stagger-in">
       {/* ─── Dollar rain animation ─── */}
       {scan.showDollarRain && (
         <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden" aria-hidden="true">
@@ -139,7 +139,7 @@ export default function Dashboard() {
                     return (
                       <div
                         key={i}
-                        className="absolute rounded-full border border-blue-400/20 pointer-events-none"
+                        className="absolute rounded-full border border-emerald-700/20 pointer-events-none"
                         style={{
                           width: `${d}px`,
                           height: `${d}px`,
@@ -167,12 +167,12 @@ export default function Dashboard() {
                           width: `${size}px`,
                           height: `${size}px`,
                           borderRadius: "50%",
-                          background: "rgba(96, 165, 250, 0.6)",
+                          background: "rgba(16, 145, 102, 0.55)",
                           left: `calc(50% + ${x}px - ${size / 2}px)`,
                           top: `calc(50% + ${y}px - ${size / 2}px)`,
                           opacity: 0,
                           animation: `dotBlip 2.5s ease-in-out ${delay}s infinite`,
-                          boxShadow: "0 0 6px 1px rgba(96, 165, 250, 0.35)",
+                          boxShadow: "0 0 6px 1px rgba(16, 145, 102, 0.35)",
                         }}
                       />
                     );
@@ -192,9 +192,9 @@ export default function Dashboard() {
                     <svg viewBox="0 0 220 220" className="w-full h-full">
                       <defs>
                         <radialGradient id="sweepGrad" cx="50%" cy="50%" r="50%">
-                          <stop offset="0%" stopColor="#60a5fa" stopOpacity="0" />
-                          <stop offset="35%" stopColor="#60a5fa" stopOpacity="0.04" />
-                          <stop offset="100%" stopColor="#93c5fd" stopOpacity="0.14" />
+                          <stop offset="0%" stopColor="#10b981" stopOpacity="0" />
+                          <stop offset="35%" stopColor="#10b981" stopOpacity="0.04" />
+                          <stop offset="100%" stopColor="#34d399" stopOpacity="0.14" />
                         </radialGradient>
                       </defs>
                       <path
@@ -213,8 +213,8 @@ export default function Dashboard() {
                       to { transform: rotate(360deg); }
                     }
                     @keyframes scanGlow {
-                      0%, 100% { box-shadow: 0 0 20px 0 rgba(59, 130, 246, 0.25); transform: scale(0.97); }
-                      50% { box-shadow: 0 0 35px 6px rgba(59, 130, 246, 0.4); transform: scale(1.01); }
+                      0%, 100% { box-shadow: 0 0 20px 0 rgba(16, 145, 102, 0.25); transform: scale(0.97); }
+                      50% { box-shadow: 0 0 35px 6px rgba(16, 145, 102, 0.4); transform: scale(1.01); }
                     }
                     @keyframes dotBlip {
                       0%, 100% { opacity: 0; transform: scale(0.5); }
@@ -230,7 +230,7 @@ export default function Dashboard() {
               <button
                 className={`relative z-10 flex items-center justify-center w-28 h-28 rounded-full shadow-xl transition-all duration-200 ${
                   scan.isPending
-                    ? "bg-blue-500/70 shadow-blue-500/30 shadow-2xl cursor-pointer"
+                    ? "bg-primary/80 shadow-primary/30 shadow-2xl cursor-pointer"
                     : hasWatchers
                       ? "bg-primary hover:bg-primary/90 hover:scale-105 active:scale-95 cursor-pointer shadow-primary/15"
                       : "bg-muted cursor-not-allowed"
@@ -248,7 +248,7 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <p className="mt-3 text-base font-bold tracking-wide">
+            <p className="mt-3 font-serif text-lg font-semibold tracking-tight">
               {scan.isPending ? "Skenujem ponuky…" : "SCAN"}
             </p>
             {scan.isPending && (
@@ -349,7 +349,7 @@ export default function Dashboard() {
                   <Icon className={`w-5 h-5 ${stat.color}`} />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold leading-none">{stat.value}</p>
+                  <p className="stat-numeral text-[28px] leading-none">{stat.value}</p>
                   <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
                 </div>
               </CardContent>
@@ -371,7 +371,7 @@ export default function Dashboard() {
       {data?.recentJobs && data.recentJobs.length > 0 && (
         <Card className="border-card-border">
           <CardHeader className="pb-2 pt-4 px-5">
-            <CardTitle className="text-sm font-semibold">Posledné ponuky</CardTitle>
+            <CardTitle className="font-serif text-base font-semibold tracking-tight">Posledné ponuky</CardTitle>
           </CardHeader>
           <CardContent className="px-5 pb-4">
             <div className="space-y-1">
