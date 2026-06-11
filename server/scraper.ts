@@ -445,7 +445,8 @@ export async function runWatcher(
 
   const minScore = config.minMatchScore ?? 50;
   const maxSave = DEFAULT_MAX_SAVE;
-  const location = config.location ?? "Praha";
+  // Location is optional — empty means country-wide search, no distance scoring
+  const location = config.location ?? "";
 
   // Extract just the city name for portal search URLs
   // Full address stays in `location` for geocoding/display
@@ -453,12 +454,21 @@ export async function runWatcher(
   console.log(`[scraper] Location: "${location}" → search city: "${searchCity}"`);
 
   // ── Country-aware portal selection ──
-  // Explicit cz/sk/both wins; "auto" (default) detects from the location string
+  // Explicit cz/sk/both wins; "auto" (legacy) detects from the location string.
+  // Country is MANDATORY: without it (and without a location to detect it
+  // from) we don't know which portals to search, so the scan is refused.
   const countrySetting = config.country ?? "auto";
-  const country: PortalCountry =
-    countrySetting === "cz" || countrySetting === "sk" || countrySetting === "both"
-      ? countrySetting
-      : await resolveCountry(location);
+  const hasExplicitCountry =
+    countrySetting === "cz" || countrySetting === "sk" || countrySetting === "both";
+  if (!hasExplicitCountry && !location) {
+    result.errors.push(
+      `Watcher "${config.name}" nemá nastavenú krajinu (CZ/SK) ani lokalitu — bez krajiny nie je možné skenovať`,
+    );
+    return result;
+  }
+  const country: PortalCountry = hasExplicitCountry
+    ? countrySetting
+    : await resolveCountry(location);
   const activePortals = portalsForCountry(country);
   console.log(
     `[scraper] Country setting "${countrySetting}" → "${country}" → portals: ${activePortals.map((p) => p.id).join(", ")}`,

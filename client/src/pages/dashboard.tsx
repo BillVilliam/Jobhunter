@@ -1,7 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { WatcherConfig } from "@shared/schema";
 import {
   Briefcase,
   Eye,
@@ -48,6 +52,45 @@ export default function Dashboard() {
   const { data, isLoading } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
   });
+
+  // ── Mandatory country gate before scanning ──
+  // Country decides WHICH portals are searched. Watchers without a country
+  // and without a location (to detect it from) cannot scan — the user must
+  // pick 🇨🇿 or 🇸🇰 first, otherwise the scan is refused.
+  const [showCountryDialog, setShowCountryDialog] = useState(false);
+  const { data: allWatchers = [] } = useQuery<WatcherConfig[]>({
+    queryKey: ["/api/watchers"],
+  });
+  const watchersMissingCountry = allWatchers.filter(
+    (w) =>
+      w.isActive &&
+      !["cz", "sk", "both"].includes((w as any).country ?? "") &&
+      !(w.location ?? "").trim(),
+  );
+
+  const handleScanClick = () => {
+    if (scan.isPending) return stopScan();
+    if (watchersMissingCountry.length > 0) {
+      setShowCountryDialog(true);
+      return;
+    }
+    startScan();
+  };
+
+  const chooseCountryAndScan = async (country: "cz" | "sk") => {
+    try {
+      await Promise.all(
+        watchersMissingCountry.map((w) =>
+          apiRequest("PATCH", `/api/watchers/${w.id}`, { country }),
+        ),
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/watchers"] });
+      setShowCountryDialog(false);
+      startScan();
+    } catch {
+      toast({ title: "Nepodarilo sa uložiť krajinu", variant: "destructive" });
+    }
+  };
 
   // Show toast when scan finishes (transition from pending → done)
   useEffect(() => {
@@ -237,7 +280,7 @@ export default function Dashboard() {
                 }`}
                 style={scan.isPending ? { animation: "scanGlow 2s ease-in-out infinite" } : undefined}
                 disabled={!hasWatchers}
-                onClick={() => scan.isPending ? stopScan() : startScan()}
+                onClick={handleScanClick}
                 data-testid="scan-button"
               >
                 {hasWatchers ? (
@@ -399,6 +442,49 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Mandatory country choice before scan ── */}
+      <Dialog
+        open={showCountryDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowCountryDialog(false);
+            toast({
+              title: "Scan zrušený",
+              description: "Bez zvolenej krajiny (🇨🇿/🇸🇰) nie je možné skenovať.",
+              variant: "destructive",
+            });
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>V ktorej krajine hľadáš prácu?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Niektoré watchery nemajú nastavenú krajinu ani lokalitu. Krajina určuje,
+            ktoré pracovné portály sa prehľadajú — bez nej sken nie je možný.
+          </p>
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            <Button
+              variant="outline"
+              className="h-16 text-base"
+              onClick={() => chooseCountryAndScan("cz")}
+              data-testid="country-cz-button"
+            >
+              🇨🇿 Česko
+            </Button>
+            <Button
+              variant="outline"
+              className="h-16 text-base"
+              onClick={() => chooseCountryAndScan("sk")}
+              data-testid="country-sk-button"
+            >
+              🇸🇰 Slovensko
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

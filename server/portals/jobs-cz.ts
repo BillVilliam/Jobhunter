@@ -11,6 +11,8 @@ async function scrapeJobsCz(
   maxPages: number = 2,
 ): Promise<ScrapedJob[]> {
   const loc = location.toLowerCase().replace(/\s+/g, "-");
+  // No city (location is optional) → country-wide search
+  const basePath = loc && loc !== "all" ? `prace/${encodeURIComponent(loc)}/` : "prace/";
   const allJobs: ScrapedJob[] = [];
 
   for (let page = 1; page <= maxPages; page++) {
@@ -18,7 +20,7 @@ async function scrapeJobsCz(
     params.set("q[]", query);
     if (page > 1) params.set("page", String(page));
 
-    const url = `https://www.jobs.cz/prace/${encodeURIComponent(loc)}/?${params.toString()}`;
+    const url = `https://www.jobs.cz/${basePath}?${params.toString()}`;
     console.log(`[scraper] jobs.cz → ${url}`);
 
     const res = await safeFetch(url);

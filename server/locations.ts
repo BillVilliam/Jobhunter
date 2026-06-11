@@ -298,7 +298,8 @@ export function estimateDistanceKm(
   userCoords: GeoCoords | null,
   jobLocation: string,
 ): number | null {
-  if (!jobLocation) return null;
+  // No user city (location is optional) → distance unknown, score neutral
+  if (!jobLocation || !userCity.trim()) return null;
 
   const userCityNorm = normalizeKey(userCity);
   const jobNorm = normalizeKey(jobLocation);

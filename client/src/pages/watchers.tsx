@@ -69,11 +69,11 @@ const REMOTE_OPTIONS = [
   { value: "any",     label: "Akýkoľvek" },
 ];
 
+// Country is the primary choice — portals are country-wide, the exact city
+// doesn't change WHICH portals are searched (only the distance scoring)
 const COUNTRY_OPTIONS = [
-  { value: "auto", label: "🌐 Automaticky (podľa lokality)" },
-  { value: "cz",   label: "🇨🇿 Česko" },
-  { value: "sk",   label: "🇸🇰 Slovensko" },
-  { value: "both", label: "🇨🇿+🇸🇰 Obe krajiny" },
+  { value: "cz", label: "🇨🇿 Česko" },
+  { value: "sk", label: "🇸🇰 Slovensko" },
 ];
 
 const COUNTRY_FLAGS: Record<string, string> = {
@@ -111,7 +111,7 @@ export default function Watchers() {
   const [editCustomTerms, setEditCustomTerms] = useState("");
   const [editCustomEmoji, setEditCustomEmoji] = useState("🔍");
   // Location & coordinates
-  const [createLocation, setCreateLocation] = useState("Praha");
+  const [createLocation, setCreateLocation] = useState("");
   const [createCoords, setCreateCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geocodingCreate, setGeocodingCreate] = useState(false);
   const [editLocation, setEditLocation] = useState("");
@@ -300,10 +300,22 @@ export default function Watchers() {
 
   const openEditDialog = (watcher: WatcherConfig) => {
     setEditCategories(parseCategories((watcher as any).jobCategories));
-    setEditLocation(watcher.location ?? "Praha");
+    setEditLocation(watcher.location ?? "");
     const w = watcher as any;
     setEditCoords(w.locationLat && w.locationLng ? { lat: w.locationLat, lng: w.locationLng } : null);
-    setEditCountry((watcher as any).country ?? "auto");
+    const storedCountry = w.country;
+    if (storedCountry === "cz" || storedCountry === "sk") {
+      setEditCountry(storedCountry);
+    } else {
+      // Legacy "auto"/"both" watchers: derive the country from the saved location
+      setEditCountry("cz");
+      if (watcher.location) {
+        fetch(`/api/portals?location=${encodeURIComponent(watcher.location)}&country=auto`)
+          .then((r) => r.json())
+          .then((d) => { if (d?.country === "sk") setEditCountry("sk"); })
+          .catch(() => {});
+      }
+    }
     setEditWatcher(watcher);
     setAddingCustomFor(null);
     setEditingCustomId(null);
@@ -320,7 +332,7 @@ export default function Watchers() {
       id: editWatcher.id,
       data: {
         name: fd.get("name") || editWatcher.name,
-        location: editLocation || "Praha",
+        location: editLocation.trim(),
         locationLat: editCoords?.lat ?? null,
         locationLng: editCoords?.lng ?? null,
         country: editCountry,
@@ -344,7 +356,7 @@ export default function Watchers() {
       name: fd.get("name") || allLabels.slice(0, 3).join(", "),
       portal: "jobs.cz",
       searchQuery: allLabels.join(", "),
-      location: createLocation || "Praha",
+      location: createLocation.trim(),
       locationLat: createCoords?.lat ?? null,
       locationLng: createCoords?.lng ?? null,
       country: createCountry,
@@ -682,11 +694,30 @@ export default function Watchers() {
                 </div>
               </div>
 
-              {/* ── Location with geocoding ── */}
+              {/* ── Country — the primary setting, decides which portals run ── */}
               <div className="space-y-1.5">
-                <Label className="text-xs">📍 Lokácia (adresa alebo miesto)</Label>
+                <Label className="text-xs">🌍 Krajina hľadania</Label>
                 <p className="text-[10px] text-muted-foreground -mt-0.5">
-                  Zadaj mesto alebo adresu — overenie GPS je voliteľné
+                  Najdôležitejšie nastavenie — určuje, ktoré pracovné portály sa prehľadajú
+                </p>
+                <Select value={createCountry} onValueChange={setCreateCountry}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <PortalPreview data={createPortals} selectedCountry={createCountry} />
+              </div>
+
+              {/* ── Location — optional personalization (distance scoring) ── */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">📍 Lokácia (voliteľné — presnejšie výsledky)</Label>
+                <p className="text-[10px] text-muted-foreground -mt-0.5">
+                  Mesto/adresa zoradí ponuky podľa vzdialenosti. Použi „Moja poloha“, alebo ju zadaj manuálne.
                 </p>
                 <div className="flex gap-2">
                   <Input
@@ -730,22 +761,6 @@ export default function Watchers() {
                     GPS neoverené — funguje aj bez overenia, AI použije názov mesta
                   </p>
                 ) : null}
-              </div>
-
-              {/* ── Country ── */}
-              <div className="space-y-1.5">
-                <Label className="text-xs">Krajina</Label>
-                <Select value={createCountry} onValueChange={setCreateCountry}>
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COUNTRY_OPTIONS.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <PortalPreview data={createPortals} selectedCountry={createCountry} />
               </div>
 
               {/* Name (optional – auto-generated from categories if empty) */}
@@ -984,9 +999,25 @@ export default function Watchers() {
                 </div>
               </div>
 
-              {/* Location with geocoding */}
+              {/* Country — the primary setting, decides which portals run */}
               <div className="space-y-1.5">
-                <Label className="text-xs">📍 Lokácia</Label>
+                <Label className="text-xs">🌍 Krajina hľadania</Label>
+                <Select value={editCountry} onValueChange={setEditCountry}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <PortalPreview data={editPortals} selectedCountry={editCountry} />
+              </div>
+
+              {/* Location — optional personalization (distance scoring) */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">📍 Lokácia (voliteľné — presnejšie výsledky)</Label>
                 <div className="flex gap-2">
                   <Input
                     value={editLocation}
@@ -1031,21 +1062,6 @@ export default function Watchers() {
                 ) : null}
               </div>
 
-              {/* Country */}
-              <div className="space-y-1.5">
-                <Label className="text-xs">Krajina</Label>
-                <Select value={editCountry} onValueChange={setEditCountry}>
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COUNTRY_OPTIONS.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <PortalPreview data={editPortals} selectedCountry={editCountry} />
-              </div>
 
               {/* Name */}
               <div className="space-y-1.5">
